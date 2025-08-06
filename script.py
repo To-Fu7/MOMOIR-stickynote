@@ -82,25 +82,69 @@ def save_settings(settings):
 
 class AddDialog(QDialog):
     def __init__(self, parent=None):
-        super().__init__(parent, flags=Qt.FramelessWindowHint)
+        super().__init__(parent)
+        self.setWindowTitle("Add Reminder")
         self.setModal(True)
+        self.setWindowFlags(Qt.Dialog | Qt.FramelessWindowHint)
         self.setStyleSheet("""
             QDialog {
-              background: #2b2b2b;
-              border-radius: 10px;
+                background: #2a1f3d;
+                border-radius: 8px;
+                border: 1px solid #4a3a5c;
             }
-            QLabel, QLineEdit {
-              color: white;
-              font-size: 14px;
+            QLabel {
+                color: #F3F4F6;
+                font-weight: bold;
+            }
+            QLineEdit {
+                background: #3d324a;
+                color: #F3F4F6;
+                border: 1px solid #5a4d66;
+                border-radius: 4px;
+                padding: 8px;
+                font-size: 14px;
+            }
+            QLineEdit:focus {
+                border-color: #8b5cf6;
+            }
+            QLineEdit::placeholder {
+                color: #9CA3AF;
+            }
+            QCalendarWidget {
+                background: #3d324a;
+                color: #F3F4F6;
+                border: 1px solid #5a4d66;
+                border-radius: 4px;
+            }
+            QCalendarWidget QTableView {
+                background: #3d324a;
+                color: #F3F4F6;
+                selection-background-color: #8b5cf6;
+            }
+            QCalendarWidget QWidget#qt_calendar_navigationbar {
+                background: #2a1f3d;
+                color: #F3F4F6;
+            }
+            QCalendarWidget QToolButton {
+                background: #3d324a;
+                color: #F3F4F6;
+                border: none;
+                border-radius: 4px;
+                padding: 4px;
+            }
+            QCalendarWidget QToolButton:hover {
+                background: #8b5cf6;
             }
             QPushButton#ok {
-              background: #8b1fb5;
+              background: #6b46c1;
               color: white;
-              padding: 6px 12px;
+              border: none;
+              padding: 10px 20px;
+              font-weight: bold;
               border-radius: 4px;
             }
             QPushButton#ok:hover {
-              background: #9d2bc9;
+              background: #7c3aed;
             }
         """)
         self.resize(360, 400)
@@ -108,11 +152,11 @@ class AddDialog(QDialog):
         v = QVBoxLayout(self)
         v.setContentsMargins(20,20,20,20)
         title = QLabel("ADD REMINDER")
-        title.setStyleSheet("font-size:24px; font-weight:bold;")
+        title.setStyleSheet("font-size: 20px; font-weight: bold; color: #F3F4F6;")
         v.addWidget(title, alignment=Qt.AlignCenter)
 
         self.name_edit = QLineEdit()
-        self.name_edit.setPlaceholderText("Reminder name…")
+        self.name_edit.setPlaceholderText("Reminder text")
         v.addSpacing(10)
         v.addWidget(QLabel("Name"))
         v.addWidget(self.name_edit)
@@ -125,7 +169,7 @@ class AddDialog(QDialog):
 
         v.addSpacing(10)
         self.summary = QLabel("", alignment=Qt.AlignCenter)
-        self.summary.setStyleSheet("color:#ddd;")
+        self.summary.setStyleSheet("color: #D1D5DB;")
         v.addWidget(self.summary)
 
         v.addStretch()
@@ -243,37 +287,74 @@ class NoteReminderApp(QMainWindow):
         f = QFrame()
         f.setStyleSheet("""
             QFrame {
-              background: #2b2b2b;
+              background: #121212;
               border-top-left-radius: 12px;
               border-bottom-left-radius: 12px;
             }
             QTextEdit {
-              background: #3a3a3a;
-              color: white;
-              border-radius:6px;
-              font-size:14px;
+              background: #121212;
+              color: #FDE047;
+              border: none;
+              font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+              font-size: 14px;
               selection-background-color: #8b1fb5;
+              padding: 8px;
             }
             QTextEdit:focus {
-              border: 1px solid #8b1fb5;
+              border: none;
+            }
+            QLabel {
+              color: white;
             }
         """)
         v = QVBoxLayout(f)
         v.setContentsMargins(15,15,15,15)
 
+        # Header with hamburger menu and NOTE title
         hdr = QHBoxLayout()
-        drag_handle = QLabel("☰")
-        drag_handle.setStyleSheet("color: #888; font-size: 16px;")
-        drag_handle.setToolTip("Click and drag to move window")
-        hdr.addWidget(drag_handle)
+        
+        # Hamburger menu icon
+        hamburger = QLabel()
+        hamburger.setFixedSize(16, 12)
+        hamburger.setStyleSheet("""
+            QLabel {
+                background: transparent;
+                color: #9CA3AF;
+            }
+        """)
+        hamburger.setText("☰")
+        hamburger.setAlignment(Qt.AlignCenter)
+        hdr.addWidget(hamburger)
+        
+        hdr.addSpacing(8)
+        
         lbl = QLabel("NOTE")
-        lbl.setStyleSheet("color:white; font-weight:bold; font-size:20px;")
+        lbl.setStyleSheet("color: white; font-weight: bold; font-size: 16px; font-family: sans-serif;")
         hdr.addWidget(lbl)
         hdr.addStretch()
         v.addLayout(hdr)
 
+        # Add border separator
+        separator = QFrame()
+        separator.setFrameShape(QFrame.HLine)
+        separator.setStyleSheet("border: 1px solid #374151; margin: 8px 0px;")
+        v.addWidget(separator)
+
         self.note_edit = QTextEdit()
-        self.note_edit.setPlaceholderText("Type your note here…")
+        self.note_edit.setPlaceholderText("Enter your notes here...")
+        self.note_edit.setStyleSheet("""
+            QTextEdit {
+                background: transparent;
+                color: #FDE047;
+                border: none;
+                font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+                font-size: 14px;
+                line-height: 1.6;
+            }
+            QTextEdit::placeholder {
+                color: #6B7280;
+            }
+        """)
         note_content = load_note()
         if note_content:
             self.note_edit.setText(note_content)
@@ -299,62 +380,107 @@ class NoteReminderApp(QMainWindow):
         f = QFrame()
         f.setStyleSheet("""
             QFrame {
-              background: #8b1fb5;
+              background: #2a1f3d;
               border-top-right-radius: 12px;
               border-bottom-right-radius: 12px;
             }
             QLabel {
               color: white;
-              font-size:20px;
-              font-weight:bold;
+              font-size: 16px;
+              font-weight: bold;
             }
             QPushButton:hover {
               opacity: 0.8;
             }
         """)
         self.rem_frame = f
+        self.reminder_minimized = False
 
         v = QVBoxLayout(f)
         v.setContentsMargins(15,15,15,15)
 
+        # Header with title and control buttons
         hdr = QHBoxLayout()
         lbl = QLabel("REMINDER")
+        lbl.setStyleSheet("color: #F3F4F6; font-weight: bold; font-size: 16px; font-family: sans-serif;")
         hdr.addWidget(lbl)
         hdr.addStretch()
         
         # Add minimize button
-        minimize = QPushButton("─")
-        minimize.setFixedSize(24,24)
-        minimize.setStyleSheet("background:transparent; color:white; font-weight:bold;")
-        minimize.setToolTip("Minimize")
-        minimize.clicked.connect(self.showMinimized)
-        hdr.addWidget(minimize)
+        self.minimize_btn = QPushButton("─")
+        self.minimize_btn.setFixedSize(24,24)
+        self.minimize_btn.setStyleSheet("""
+            QPushButton {
+                background: transparent; 
+                color: #D1D5DB; 
+                font-weight: bold;
+                border: none;
+                border-radius: 4px;
+            }
+            QPushButton:hover {
+                background: rgba(107, 114, 128, 0.3);
+                color: white;
+            }
+        """)
+        self.minimize_btn.setToolTip("Minimize")
+        self.minimize_btn.clicked.connect(self.toggle_reminder_minimize)
+        hdr.addWidget(self.minimize_btn)
         
         close = QPushButton("✕")
         close.setFixedSize(24,24)
-        close.setStyleSheet("background:transparent; color:white; font-weight:bold;")
+        close.setStyleSheet("""
+            QPushButton {
+                background: transparent; 
+                color: #D1D5DB; 
+                font-weight: bold;
+                border: none;
+                border-radius: 4px;
+            }
+            QPushButton:hover {
+                background: rgba(107, 114, 128, 0.3);
+                color: white;
+            }
+        """)
         close.setToolTip("Close")
         close.clicked.connect(self.close)
         hdr.addWidget(close)
         v.addLayout(hdr)
 
+        # Add border separator
+        separator = QFrame()
+        separator.setFrameShape(QFrame.HLine)
+        separator.setStyleSheet("border: 1px solid #4A3A5C; margin: 8px 0px;")
+        v.addWidget(separator)
+
+        # Create reminder content widget
+        self.reminder_content = QWidget()
+        reminder_content_layout = QVBoxLayout(self.reminder_content)
+        reminder_content_layout.setContentsMargins(0, 0, 0, 0)
+
         self.rem_list = QVBoxLayout()
         self.rem_list.setSpacing(8)
         self.rem_list.addStretch()
-        v.addLayout(self.rem_list)
+        reminder_content_layout.addLayout(self.rem_list)
 
-        btn = QPushButton("+ Add Reminder")
-        btn.setStyleSheet("""
+        # Add reminder button
+        self.add_btn = QPushButton("+ Add Reminder")
+        self.add_btn.setStyleSheet("""
             QPushButton {
-              background:black; color:white; padding:6px 12px;
-              border-radius:4px;
+              background: #6b46c1; 
+              color: white; 
+              padding: 8px 16px;
+              border: none;
+              border-radius: 4px;
+              font-weight: bold;
             }
             QPushButton:hover {
-              background:#333;
+              background: #7c3aed;
             }
         """)
-        btn.clicked.connect(self.on_add)
-        v.addWidget(btn, alignment=Qt.AlignRight)
+        self.add_btn.clicked.connect(self.on_add)
+        reminder_content_layout.addWidget(self.add_btn, alignment=Qt.AlignCenter)
+
+        v.addWidget(self.reminder_content)
 
         # Add resize grip
         self.resizer = QSizeGrip(f)
@@ -364,6 +490,16 @@ class NoteReminderApp(QMainWindow):
 
         self.load_reminders()
         return f
+
+    def toggle_reminder_minimize(self):
+        """Toggle the reminder panel minimize state."""
+        self.reminder_minimized = not self.reminder_minimized
+        if self.reminder_minimized:
+            self.reminder_content.hide()
+            self.minimize_btn.setText("+")
+        else:
+            self.reminder_content.show()
+            self.minimize_btn.setText("─")
 
     def load_reminders(self):
         """Load and display reminders with improved performance."""
@@ -379,11 +515,37 @@ class NoteReminderApp(QMainWindow):
 
     def create_reminder_widget(self, idx, rem):
         """Create a single reminder widget."""
-        h = QHBoxLayout()
-        h.setContentsMargins(5, 2, 5, 2)
+        container = QWidget()
+        container.setStyleSheet("""
+            QWidget {
+                background: #3d324a;
+                border-radius: 4px;
+                padding: 2px;
+            }
+            QWidget:hover {
+                background: rgba(107, 114, 128, 0.2);
+            }
+        """)
         
-        lbl = QLabel(f"• {rem.get('name', 'Unnamed')}  ({rem.get('date', 'No date')})")
-        lbl.setStyleSheet("color:white; font-size:14px; font-weight:normal;")
+        h = QHBoxLayout(container)
+        h.setContentsMargins(12, 8, 8, 8)
+        
+        # Format the date to match reference: (YYYY-MM-DD)
+        reminder_text = rem.get('name', 'Unnamed')
+        reminder_date = rem.get('date', 'No date')
+        formatted_date = f"({reminder_date})"
+        
+        # Create the label with bullet point, text, and date
+        lbl = QLabel(f"• {reminder_text} {formatted_date}")
+        lbl.setStyleSheet("""
+            QLabel {
+                color: #FDE68A; 
+                font-size: 14px; 
+                font-weight: normal;
+                background: transparent;
+                padding: 0px;
+            }
+        """)
         lbl.setWordWrap(True)
         h.addWidget(lbl, 1)  # Give label more space
         
@@ -391,22 +553,21 @@ class NoteReminderApp(QMainWindow):
         del_btn.setFixedSize(20, 20)
         del_btn.setStyleSheet("""
             QPushButton {
-                background:#B71A1A; 
-                color:white; 
-                border:none; 
-                border-radius:10px;
-                font-weight:bold;
+                background: #EF4444; 
+                color: white; 
+                border: none; 
+                border-radius: 10px;
+                font-weight: bold;
+                font-size: 12px;
             }
             QPushButton:hover {
-                background:#D91A1A;
+                background: #DC2626;
             }
         """)
         del_btn.setToolTip("Delete reminder")
         del_btn.clicked.connect(lambda _, ix=idx: self.delete_reminder(ix))
         h.addWidget(del_btn)
         
-        container = QWidget()
-        container.setLayout(h)
         self.rem_list.insertWidget(self.rem_list.count()-1, container)
 
     def delete_reminder(self, index):
@@ -491,11 +652,11 @@ class NoteReminderApp(QMainWindow):
         super().closeEvent(event)
 
 if __name__ == '__main__':
-    app = QApplication(sys.argv)
+    # Enable high DPI support before creating QApplication
+    QApplication.setAttribute(Qt.AA_EnableHighDpiScaling, True)
+    QApplication.setAttribute(Qt.AA_UseHighDpiPixmaps, True)
     
-    # Enable high DPI support
-    app.setAttribute(Qt.AA_EnableHighDpiScaling, True)
-    app.setAttribute(Qt.AA_UseHighDpiPixmaps, True)
+    app = QApplication(sys.argv)
     
     window = NoteReminderApp()
     window.show()
