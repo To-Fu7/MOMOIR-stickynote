@@ -80,119 +80,7 @@ def save_settings(settings):
     except (IOError, UnicodeEncodeError) as e:
         print(f"Error saving settings: {e}")
 
-class AddDialog(QDialog):
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle("Add Reminder")
-        self.setModal(True)
-        self.setWindowFlags(Qt.Dialog | Qt.FramelessWindowHint)
-        self.setStyleSheet("""
-            QDialog {
-                background: #2a1f3d;
-                border-radius: 8px;
-                border: 1px solid #4a3a5c;
-            }
-            QLabel {
-                color: #F3F4F6;
-                font-weight: bold;
-            }
-            QLineEdit {
-                background: #3d324a;
-                color: #F3F4F6;
-                border: 1px solid #5a4d66;
-                border-radius: 4px;
-                padding: 8px;
-                font-size: 14px;
-            }
-            QLineEdit:focus {
-                border-color: #8b5cf6;
-            }
-            QLineEdit::placeholder {
-                color: #9CA3AF;
-            }
-            QCalendarWidget {
-                background: #3d324a;
-                color: #F3F4F6;
-                border: 1px solid #5a4d66;
-                border-radius: 4px;
-            }
-            QCalendarWidget QTableView {
-                background: #3d324a;
-                color: #F3F4F6;
-                selection-background-color: #8b5cf6;
-            }
-            QCalendarWidget QWidget#qt_calendar_navigationbar {
-                background: #2a1f3d;
-                color: #F3F4F6;
-            }
-            QCalendarWidget QToolButton {
-                background: #3d324a;
-                color: #F3F4F6;
-                border: none;
-                border-radius: 4px;
-                padding: 4px;
-            }
-            QCalendarWidget QToolButton:hover {
-                background: #8b5cf6;
-            }
-            QPushButton#ok {
-              background: #6b46c1;
-              color: white;
-              border: none;
-              padding: 10px 20px;
-              font-weight: bold;
-              border-radius: 4px;
-            }
-            QPushButton#ok:hover {
-              background: #7c3aed;
-            }
-        """)
-        self.resize(360, 400)
 
-        v = QVBoxLayout(self)
-        v.setContentsMargins(20,20,20,20)
-        title = QLabel("ADD REMINDER")
-        title.setStyleSheet("font-size: 20px; font-weight: bold; color: #F3F4F6;")
-        v.addWidget(title, alignment=Qt.AlignCenter)
-
-        self.name_edit = QLineEdit()
-        self.name_edit.setPlaceholderText("Reminder text")
-        v.addSpacing(10)
-        v.addWidget(QLabel("Name"))
-        v.addWidget(self.name_edit)
-
-        v.addSpacing(15)
-        self.cal = QCalendarWidget()
-        self.cal.setGridVisible(True)
-        self.cal.setMinimumDate(QDate.currentDate())
-        v.addWidget(self.cal)
-
-        v.addSpacing(10)
-        self.summary = QLabel("", alignment=Qt.AlignCenter)
-        self.summary.setStyleSheet("color: #D1D5DB;")
-        v.addWidget(self.summary)
-
-        v.addStretch()
-        ok = QPushButton("Add")
-        ok.setObjectName("ok")
-        ok.clicked.connect(self.accept)
-        v.addWidget(ok, alignment=Qt.AlignCenter)
-
-        self.cal.selectionChanged.connect(self.update_summary)
-        self.name_edit.textChanged.connect(self.update_summary)
-        self.update_summary()
-
-    def update_summary(self):
-        days = (self.cal.selectedDate().toPyDate() - date.today()).days
-        self.summary.setText(
-            f"Reminds in {days} day{'s' if days!=1 else ''}\non {self.cal.selectedDate().toString('dd MMM yyyy')}"
-        )
-
-    def get_data(self):
-        return {
-            "name": self.name_edit.text().strip(),
-            "date": self.cal.selectedDate().toString("yyyy-MM-dd")
-        }
 
 class NoteReminderApp(QMainWindow):
     def __init__(self):
@@ -278,10 +166,6 @@ class NoteReminderApp(QMainWindow):
         mf_layout = QHBoxLayout(self.main_frame)
         mf_layout.setContentsMargins(0,0,0,0)
         mf_layout.addWidget(self.splitter)
-
-        self.overlay = QWidget(self.main_frame)
-        self.overlay.setStyleSheet("background: rgba(0,0,0,0.5);")
-        self.overlay.hide()
 
     def build_notes_panel(self):
         f = QFrame()
@@ -395,6 +279,7 @@ class NoteReminderApp(QMainWindow):
         """)
         self.rem_frame = f
         self.reminder_minimized = False
+        self.show_add_form = False
 
         v = QVBoxLayout(f)
         v.setContentsMargins(15,15,15,15)
@@ -462,7 +347,153 @@ class NoteReminderApp(QMainWindow):
         self.rem_list.addStretch()
         reminder_content_layout.addLayout(self.rem_list)
 
-        # Add reminder button
+        # Create inline add form
+        self.create_add_form()
+        reminder_content_layout.addWidget(self.add_form_widget)
+
+        # Add reminder button (initially visible)
+        self.create_add_button()
+        reminder_content_layout.addWidget(self.add_button_widget)
+
+        v.addWidget(self.reminder_content)
+
+        # Add resize grip
+        self.resizer = QSizeGrip(f)
+        self.resizer.setFixedSize(12, 12)
+        self.resizer.setStyleSheet("background:rgba(255,255,255,0.3); border-radius:2px;")
+        v.addWidget(self.resizer, alignment=Qt.AlignRight | Qt.AlignBottom)
+
+        self.load_reminders()
+        return f
+
+    def create_add_form(self):
+        """Create the inline add reminder form."""
+        self.add_form_widget = QWidget()
+        self.add_form_widget.setStyleSheet("""
+            QWidget {
+                background: transparent;
+                border-top: 1px solid #4A3A5C;
+                padding: 8px 0px;
+            }
+        """)
+        
+        form_layout = QVBoxLayout(self.add_form_widget)
+        form_layout.setContentsMargins(0, 16, 0, 0)
+        form_layout.setSpacing(8)
+
+        # Reminder text input
+        self.reminder_text_input = QLineEdit()
+        self.reminder_text_input.setPlaceholderText("Reminder text")
+        self.reminder_text_input.setStyleSheet("""
+            QLineEdit {
+                background: #3d324a;
+                color: #F3F4F6;
+                border: 1px solid #5a4d66;
+                border-radius: 4px;
+                padding: 8px;
+                font-size: 14px;
+            }
+            QLineEdit:focus {
+                border-color: #8b5cf6;
+            }
+            QLineEdit::placeholder {
+                color: #9CA3AF;
+            }
+        """)
+        form_layout.addWidget(self.reminder_text_input)
+
+        # Date input
+        from PyQt5.QtCore import QDate
+        self.reminder_date_input = QLineEdit()
+        self.reminder_date_input.setPlaceholderText("YYYY-MM-DD")
+        self.reminder_date_input.setStyleSheet("""
+            QLineEdit {
+                background: #3d324a;
+                color: #F3F4F6;
+                border: 1px solid #5a4d66;
+                border-radius: 4px;
+                padding: 8px;
+                font-size: 14px;
+            }
+            QLineEdit:focus {
+                border-color: #8b5cf6;
+            }
+            QLineEdit::placeholder {
+                color: #9CA3AF;
+            }
+        """)
+        
+        # Set today's date as default
+        today = QDate.currentDate().toString("yyyy-MM-dd")
+        self.reminder_date_input.setText(today)
+        form_layout.addWidget(self.reminder_date_input)
+
+        # Add keyboard shortcuts
+        self.reminder_text_input.returnPressed.connect(self.confirm_add_reminder)
+        self.reminder_date_input.returnPressed.connect(self.confirm_add_reminder)
+        
+        # Reset styling when user types in date field
+        self.reminder_date_input.textChanged.connect(self.reset_date_input_style)
+
+        # Buttons layout
+        buttons_layout = QHBoxLayout()
+        buttons_layout.setSpacing(8)
+
+        # Add button
+        self.add_confirm_btn = QPushButton("Add")
+        self.add_confirm_btn.setStyleSheet("""
+            QPushButton {
+                background: #6b46c1;
+                color: white;
+                border: none;
+                padding: 8px 16px;
+                border-radius: 4px;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background: #7c3aed;
+            }
+        """)
+        self.add_confirm_btn.clicked.connect(self.confirm_add_reminder)
+        buttons_layout.addWidget(self.add_confirm_btn)
+
+        # Cancel button
+        self.cancel_btn = QPushButton("Cancel")
+        self.cancel_btn.setStyleSheet("""
+            QPushButton {
+                background: transparent;
+                color: #D1D5DB;
+                border: 1px solid #5a4d66;
+                padding: 8px 16px;
+                border-radius: 4px;
+            }
+            QPushButton:hover {
+                color: white;
+                background: rgba(107, 114, 128, 0.3);
+            }
+        """)
+        self.cancel_btn.clicked.connect(self.cancel_add_reminder)
+        buttons_layout.addWidget(self.cancel_btn)
+
+        form_layout.addLayout(buttons_layout)
+        
+        # Initially hide the form
+        self.add_form_widget.hide()
+
+    def create_add_button(self):
+        """Create the add reminder button."""
+        self.add_button_widget = QWidget()
+        self.add_button_widget.setStyleSheet("""
+            QWidget {
+                background: transparent;
+                border-top: 1px solid #4A3A5C;
+                padding: 8px 0px;
+            }
+        """)
+        
+        button_layout = QVBoxLayout(self.add_button_widget)
+        button_layout.setContentsMargins(0, 16, 0, 0)
+
         self.add_btn = QPushButton("+ Add Reminder")
         self.add_btn.setStyleSheet("""
             QPushButton {
@@ -477,19 +508,75 @@ class NoteReminderApp(QMainWindow):
               background: #7c3aed;
             }
         """)
-        self.add_btn.clicked.connect(self.on_add)
-        reminder_content_layout.addWidget(self.add_btn, alignment=Qt.AlignCenter)
+        self.add_btn.clicked.connect(self.show_add_form_inline)
+        button_layout.addWidget(self.add_btn, alignment=Qt.AlignCenter)
 
-        v.addWidget(self.reminder_content)
+    def show_add_form_inline(self):
+        """Show the inline add form and hide the add button."""
+        self.show_add_form = True
+        self.add_button_widget.hide()
+        self.add_form_widget.show()
+        self.reminder_text_input.setFocus()
+        self.reminder_text_input.clear()
 
-        # Add resize grip
-        self.resizer = QSizeGrip(f)
-        self.resizer.setFixedSize(12, 12)
-        self.resizer.setStyleSheet("background:rgba(255,255,255,0.3); border-radius:2px;")
-        v.addWidget(self.resizer, alignment=Qt.AlignRight | Qt.AlignBottom)
+    def cancel_add_reminder(self):
+        """Cancel adding reminder and show the add button."""
+        self.show_add_form = False
+        self.add_form_widget.hide()
+        self.add_button_widget.show()
+        self.reminder_text_input.clear()
+        self.reset_date_input_style()
 
-        self.load_reminders()
-        return f
+    def reset_date_input_style(self):
+        """Reset the date input styling to normal."""
+        self.reminder_date_input.setStyleSheet("""
+            QLineEdit {
+                background: #3d324a;
+                color: #F3F4F6;
+                border: 1px solid #5a4d66;
+                border-radius: 4px;
+                padding: 8px;
+                font-size: 14px;
+            }
+            QLineEdit:focus {
+                border-color: #8b5cf6;
+            }
+            QLineEdit::placeholder {
+                color: #9CA3AF;
+            }
+        """)
+
+    def confirm_add_reminder(self):
+        """Add the reminder and hide the form."""
+        text = self.reminder_text_input.text().strip()
+        date = self.reminder_date_input.text().strip()
+        
+        if text and date:
+            # Validate date format
+            try:
+                from datetime import datetime
+                datetime.strptime(date, '%Y-%m-%d')
+                
+                # Add the reminder
+                lst = load_rems()
+                lst.append({"name": text, "date": date})
+                save_rems(lst)
+                self.load_reminders()
+                
+                # Hide form and show button
+                self.cancel_add_reminder()
+            except ValueError:
+                # Invalid date format - could add error message here
+                self.reminder_date_input.setStyleSheet("""
+                    QLineEdit {
+                        background: #3d324a;
+                        color: #F3F4F6;
+                        border: 2px solid #EF4444;
+                        border-radius: 4px;
+                        padding: 8px;
+                        font-size: 14px;
+                    }
+                """)
 
     def toggle_reminder_minimize(self):
         """Toggle the reminder panel minimize state."""
@@ -577,21 +664,6 @@ class NoteReminderApp(QMainWindow):
             rems.pop(index)
             save_rems(rems)
             self.load_reminders()
-            
-    def on_add(self):
-        """Handle adding new reminders."""
-        self.overlay.setGeometry(self.main_frame.rect())
-        self.overlay.show()
-        dlg = AddDialog(self)
-        dlg.move(self.geometry().center() - dlg.rect().center())
-        if dlg.exec_():
-            data = dlg.get_data()
-            if data['name']:  # Only add if name is not empty
-                lst = load_rems()
-                lst.append(data)
-                save_rems(lst)
-                self.load_reminders()
-        self.overlay.hide()
 
     def mousePressEvent(self, event):
         """Handle mouse press for window dragging."""
