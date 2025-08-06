@@ -8,7 +8,7 @@ from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QSplitter,
     QFrame, QTextEdit, QPushButton, QLabel,
     QHBoxLayout, QVBoxLayout, QDialog, QCalendarWidget,
-    QLineEdit, QSizeGrip, QGraphicsDropShadowEffect
+    QLineEdit, QSizeGrip, QGraphicsDropShadowEffect, QDateEdit
 )
 
 NOTE_FILE = 'sticky_note.json'
@@ -403,11 +403,11 @@ class NoteReminderApp(QMainWindow):
         form_layout.addWidget(self.reminder_text_input)
 
         # Date input
-        from PyQt5.QtCore import QDate
-        self.reminder_date_input = QLineEdit()
-        self.reminder_date_input.setPlaceholderText("YYYY-MM-DD")
+        self.reminder_date_input = QDateEdit()
+        self.reminder_date_input.setCalendarPopup(True)
+        self.reminder_date_input.setDate(QDate.currentDate())
         self.reminder_date_input.setStyleSheet("""
-            QLineEdit {
+            QDateEdit {
                 background: #3d324a;
                 color: #F3F4F6;
                 border: 1px solid #5a4d66;
@@ -415,25 +415,93 @@ class NoteReminderApp(QMainWindow):
                 padding: 8px;
                 font-size: 14px;
             }
-            QLineEdit:focus {
+            QDateEdit:focus {
                 border-color: #8b5cf6;
             }
-            QLineEdit::placeholder {
-                color: #9CA3AF;
+            QDateEdit::drop-down {
+                subcontrol-origin: padding;
+                subcontrol-position: top right;
+                width: 20px;
+                border-left: 1px solid #5a4d66;
+                background: #3d324a;
+            }
+            QDateEdit::down-arrow {
+                image: none;
+                border: 2px solid #F3F4F6;
+                border-top: none;
+                border-right: none;
+                width: 6px;
+                height: 6px;
+                margin-right: 3px;
+            }
+            QCalendarWidget {
+                background: #2a1f3d;
+                color: #F3F4F6;
+                border: 1px solid #4a3a5c;
+                border-radius: 4px;
+            }
+            QCalendarWidget QWidget#qt_calendar_navigationbar {
+                background: #3d324a;
+                color: #F3F4F6;
+            }
+            QCalendarWidget QToolButton {
+                background: #3d324a;
+                color: #F3F4F6;
+                border: none;
+                border-radius: 4px;
+                padding: 4px;
+                margin: 2px;
+            }
+            QCalendarWidget QToolButton:hover {
+                background: #8b5cf6;
+            }
+            QCalendarWidget QToolButton:pressed {
+                background: #6b46c1;
+            }
+            QCalendarWidget QMenu {
+                background: #3d324a;
+                color: #F3F4F6;
+                border: 1px solid #5a4d66;
+            }
+            QCalendarWidget QSpinBox {
+                background: #3d324a;
+                color: #F3F4F6;
+                border: 1px solid #5a4d66;
+                border-radius: 2px;
+            }
+            QCalendarWidget QTableView {
+                background: #2a1f3d;
+                color: #F3F4F6;
+                selection-background-color: #8b5cf6;
+                selection-color: white;
+                gridline-color: #4a3a5c;
+            }
+            QCalendarWidget QTableView::item {
+                padding: 4px;
+            }
+            QCalendarWidget QTableView::item:selected {
+                background: #8b5cf6;
+                color: white;
+            }
+            QCalendarWidget QTableView::item:hover {
+                background: #6b46c1;
+            }
+            QCalendarWidget QHeaderView::section {
+                background: #3d324a;
+                color: #F3F4F6;
+                border: none;
+                padding: 4px;
+                font-weight: bold;
             }
         """)
-        
-        # Set today's date as default
-        today = QDate.currentDate().toString("yyyy-MM-dd")
-        self.reminder_date_input.setText(today)
         form_layout.addWidget(self.reminder_date_input)
 
         # Add keyboard shortcuts
         self.reminder_text_input.returnPressed.connect(self.confirm_add_reminder)
-        self.reminder_date_input.returnPressed.connect(self.confirm_add_reminder)
+        # Note: QDateEdit doesn't have returnPressed, so we'll handle it differently
         
-        # Reset styling when user types in date field
-        self.reminder_date_input.textChanged.connect(self.reset_date_input_style)
+        # Reset styling when user changes date
+        self.reminder_date_input.dateChanged.connect(self.reset_date_input_style)
 
         # Buttons layout
         buttons_layout = QHBoxLayout()
@@ -530,7 +598,7 @@ class NoteReminderApp(QMainWindow):
     def reset_date_input_style(self):
         """Reset the date input styling to normal."""
         self.reminder_date_input.setStyleSheet("""
-            QLineEdit {
+            QDateEdit {
                 background: #3d324a;
                 color: #F3F4F6;
                 border: 1px solid #5a4d66;
@@ -538,45 +606,100 @@ class NoteReminderApp(QMainWindow):
                 padding: 8px;
                 font-size: 14px;
             }
-            QLineEdit:focus {
+            QDateEdit:focus {
                 border-color: #8b5cf6;
             }
-            QLineEdit::placeholder {
-                color: #9CA3AF;
+            QDateEdit::drop-down {
+                subcontrol-origin: padding;
+                subcontrol-position: top right;
+                width: 20px;
+                border-left: 1px solid #5a4d66;
+                background: #3d324a;
+            }
+            QDateEdit::down-arrow {
+                image: none;
+                border: 2px solid #F3F4F6;
+                border-top: none;
+                border-right: none;
+                width: 6px;
+                height: 6px;
+                margin-right: 3px;
+            }
+            QCalendarWidget {
+                background: #2a1f3d;
+                color: #F3F4F6;
+                border: 1px solid #4a3a5c;
+                border-radius: 4px;
+            }
+            QCalendarWidget QWidget#qt_calendar_navigationbar {
+                background: #3d324a;
+                color: #F3F4F6;
+            }
+            QCalendarWidget QToolButton {
+                background: #3d324a;
+                color: #F3F4F6;
+                border: none;
+                border-radius: 4px;
+                padding: 4px;
+                margin: 2px;
+            }
+            QCalendarWidget QToolButton:hover {
+                background: #8b5cf6;
+            }
+            QCalendarWidget QToolButton:pressed {
+                background: #6b46c1;
+            }
+            QCalendarWidget QMenu {
+                background: #3d324a;
+                color: #F3F4F6;
+                border: 1px solid #5a4d66;
+            }
+            QCalendarWidget QSpinBox {
+                background: #3d324a;
+                color: #F3F4F6;
+                border: 1px solid #5a4d66;
+                border-radius: 2px;
+            }
+            QCalendarWidget QTableView {
+                background: #2a1f3d;
+                color: #F3F4F6;
+                selection-background-color: #8b5cf6;
+                selection-color: white;
+                gridline-color: #4a3a5c;
+            }
+            QCalendarWidget QTableView::item {
+                padding: 4px;
+            }
+            QCalendarWidget QTableView::item:selected {
+                background: #8b5cf6;
+                color: white;
+            }
+            QCalendarWidget QTableView::item:hover {
+                background: #6b46c1;
+            }
+            QCalendarWidget QHeaderView::section {
+                background: #3d324a;
+                color: #F3F4F6;
+                border: none;
+                padding: 4px;
+                font-weight: bold;
             }
         """)
 
     def confirm_add_reminder(self):
         """Add the reminder and hide the form."""
         text = self.reminder_text_input.text().strip()
-        date = self.reminder_date_input.text().strip()
+        date = self.reminder_date_input.date().toString("yyyy-MM-dd")
         
-        if text and date:
-            # Validate date format
-            try:
-                from datetime import datetime
-                datetime.strptime(date, '%Y-%m-%d')
-                
-                # Add the reminder
-                lst = load_rems()
-                lst.append({"name": text, "date": date})
-                save_rems(lst)
-                self.load_reminders()
-                
-                # Hide form and show button
-                self.cancel_add_reminder()
-            except ValueError:
-                # Invalid date format - could add error message here
-                self.reminder_date_input.setStyleSheet("""
-                    QLineEdit {
-                        background: #3d324a;
-                        color: #F3F4F6;
-                        border: 2px solid #EF4444;
-                        border-radius: 4px;
-                        padding: 8px;
-                        font-size: 14px;
-                    }
-                """)
+        if text:  # Only check if text is provided, date is always valid from QDateEdit
+            # Add the reminder
+            lst = load_rems()
+            lst.append({"name": text, "date": date})
+            save_rems(lst)
+            self.load_reminders()
+            
+            # Hide form and show button
+            self.cancel_add_reminder()
 
     def toggle_reminder_minimize(self):
         """Toggle the reminder panel minimize state."""

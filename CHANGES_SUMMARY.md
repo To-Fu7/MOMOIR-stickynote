@@ -32,12 +32,16 @@ The `script.py` has been updated to match the display styling and reminder logic
 - **Inline Form**: Added inline form that appears in the reminder panel when "Add Reminder" is clicked
 - **Form Fields**:
   - **Reminder Text**: Input field with placeholder "Reminder text"
-  - **Date Field**: Input field with YYYY-MM-DD format, defaults to today's date
+  - **Date Field**: QDateEdit with calendar popup (click dropdown arrow to open calendar), defaults to today's date
   - **Add/Cancel Buttons**: Side-by-side buttons matching the React reference
+- **Calendar Popup**: 
+  - Click the dropdown arrow on the date field to open a styled calendar
+  - Calendar matches the purple theme with proper hover and selection states
+  - No manual date typing needed - just pick from calendar
 - **Keyboard Support**: 
-  - Enter key in either field adds the reminder
+  - Enter key in text field adds the reminder
   - Proper focus management
-- **Validation**: Date format validation with visual feedback (red border for invalid dates)
+- **Validation**: Date is always valid since it comes from calendar widget
 - **State Management**: Form toggles between "Add Reminder" button and the input form
 
 ### 4. Minimize Functionality
@@ -65,9 +69,9 @@ The `script.py` has been updated to match the display styling and reminder logic
 
 ### After (Inline Form)
 - Clicking "Add Reminder" shows inline form in the same panel
-- Simple text inputs with keyboard support
+- Simple text input with calendar popup for date selection
 - Matches React reference behavior exactly
-- Streamlined workflow: Click → Type → Enter
+- Streamlined workflow: Click → Type → Pick Date from Calendar → Add/Cancel
 
 ## Files Modified
 1. `script.py` - Main application file with all styling and logic updates
