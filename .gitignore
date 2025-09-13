@@ -32,6 +32,7 @@ MOMOIR-stickynote\memoir
 #  before PyInstaller builds the exe, so as to inject date/other infos into it.
 *.manifest
 *.spec
+./memoir
 
 # Installer logs
 pip-log.txt
