@@ -34,6 +34,11 @@ export function StickyNote() {
 
   const [isMinimized, setIsMinimized] = useState(false);
 
+  const handleNotification = (message: string) => {
+    // Show notification to user (you can implement a toast notification system here)
+    alert(message);
+  };
+
   return (
     <div className="flex w-[800px] h-[500px] shadow-lg rounded-lg overflow-hidden bg-white">
       <NoteArea 
@@ -46,6 +51,7 @@ export function StickyNote() {
         onRemoveReminder={removeReminder}
         isMinimized={isMinimized}
         onMinimize={() => setIsMinimized(!isMinimized)}
+        onNotification={handleNotification}
       />
     </div>
   );
