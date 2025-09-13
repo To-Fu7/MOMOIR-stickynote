@@ -2,22 +2,18 @@ import sys
 import os
 import json
 from datetime import date
-import paho.mqtt.client as mqtt
-import threading
 from PyQt5.QtGui import QIcon, QColor
-from PyQt5.QtCore import Qt, QPoint, QDate, QSettings, QTimer, pyqtSignal
+from PyQt5.QtCore import Qt, QPoint, QDate, QSettings
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QSplitter,
     QFrame, QTextEdit, QPushButton, QLabel,
     QHBoxLayout, QVBoxLayout, QDialog, QCalendarWidget,
-    QLineEdit, QSizeGrip, QGraphicsDropShadowEffect, QTabWidget,
-    QSystemTrayIcon, QMessageBox
+    QLineEdit, QSizeGrip, QGraphicsDropShadowEffect, QDateEdit
 )
 
 NOTE_FILE = 'sticky_note.json'
 REM_FILE  = 'reminders.json'
 SETTINGS_FILE = 'app_settings.json'
-MONITORING_FILE = 'monitoring.json'
 
 def load_note():
     """Load note content from file with proper error handling."""
@@ -84,266 +80,7 @@ def save_settings(settings):
     except (IOError, UnicodeEncodeError) as e:
         print(f"Error saving settings: {e}")
 
-def load_monitoring():
-    """Load monitoring configurations from file with proper error handling."""
-    if not os.path.exists(MONITORING_FILE):
-        return []
-    try:
-        with open(MONITORING_FILE, 'r', encoding='utf-8') as f:
-            data = json.load(f)
-        return data if isinstance(data, list) else []
-    except (json.JSONDecodeError, IOError, UnicodeDecodeError) as e:
-        print(f"Error loading monitoring: {e}")
-        return []
 
-def save_monitoring(lst):
-    """Save monitoring configurations to file with proper error handling."""
-    try:
-        with open(MONITORING_FILE, 'w', encoding='utf-8') as f:
-            json.dump(lst, f, ensure_ascii=False, indent=2)
-    except (IOError, UnicodeEncodeError) as e:
-        print(f"Error saving monitoring: {e}")
-
-class AddDialog(QDialog):
-    def __init__(self, parent=None):
-        super().__init__(parent, flags=Qt.FramelessWindowHint)
-        self.setModal(True)
-        self.setStyleSheet("""
-            QDialog {
-              background: #2b2b2b;
-              border-radius: 10px;
-            }
-            QLabel, QLineEdit {
-              color: white;
-              font-size: 14px;
-            }
-            QPushButton#ok {
-              background: #8b1fb5;
-              color: white;
-              padding: 6px 12px;
-              border-radius: 4px;
-            }
-            QPushButton#ok:hover {
-              background: #9d2bc9;
-            }
-            QCalendarWidget {
-              background: #3a3a3a;
-              color: white;
-              border: 1px solid #8b1fb5;
-              border-radius: 6px;
-            }
-            QCalendarWidget QWidget {
-              background: #3a3a3a;
-              color: white;
-            }
-            QCalendarWidget QAbstractItemView:enabled {
-              background: #3a3a3a;
-              color: white;
-              selection-background-color: #8b1fb5;
-              selection-color: white;
-            }
-            QCalendarWidget QAbstractItemView:disabled {
-              background: #2a2a2a;
-              color: #666;
-            }
-            QCalendarWidget QWidget#qt_calendar_navigationbar {
-              background: #8b1fb5;
-              color: white;
-            }
-            QCalendarWidget QToolButton {
-              background: #8b1fb5;
-              color: white;
-              border: none;
-              padding: 4px;
-              border-radius: 3px;
-            }
-            QCalendarWidget QToolButton:hover {
-              background: #9d2bc9;
-            }
-            QCalendarWidget QMenu {
-              background: #3a3a3a;
-              color: white;
-              border: 1px solid #8b1fb5;
-            }
-            QCalendarWidget QMenu::item {
-              background: #3a3a3a;
-              color: white;
-              padding: 4px 8px;
-            }
-            QCalendarWidget QMenu::item:selected {
-              background: #8b1fb5;
-            }
-        """)
-        self.resize(360, 400)
-
-        v = QVBoxLayout(self)
-        v.setContentsMargins(20,20,20,20)
-        title = QLabel("ADD REMINDER")
-        title.setStyleSheet("font-size:24px; font-weight:bold;")
-        v.addWidget(title, alignment=Qt.AlignCenter)
-
-        self.name_edit = QLineEdit()
-        self.name_edit.setPlaceholderText("Reminder name…")
-        v.addSpacing(10)
-        v.addWidget(QLabel("Name"))
-        v.addWidget(self.name_edit)
-
-        v.addSpacing(15)
-        self.cal = QCalendarWidget()
-        self.cal.setGridVisible(True)
-        self.cal.setMinimumDate(QDate.currentDate())
-        v.addWidget(self.cal)
-
-        v.addSpacing(10)
-        self.summary = QLabel("", alignment=Qt.AlignCenter)
-        self.summary.setStyleSheet("color:#ddd;")
-        v.addWidget(self.summary)
-
-        v.addStretch()
-        ok = QPushButton("Add")
-        ok.setObjectName("ok")
-        ok.clicked.connect(self.accept)
-        v.addWidget(ok, alignment=Qt.AlignCenter)
-
-        self.cal.selectionChanged.connect(self.update_summary)
-        self.name_edit.textChanged.connect(self.update_summary)
-        self.update_summary()
-
-    def update_summary(self):
-        days = (self.cal.selectedDate().toPyDate() - date.today()).days
-        self.summary.setText(
-            f"Reminds in {days} day{'s' if days!=1 else ''}\non {self.cal.selectedDate().toString('dd MMM yyyy')}"
-        )
-
-    def get_data(self):
-        return {
-            "name": self.name_edit.text().strip(),
-            "date": self.cal.selectedDate().toString("yyyy-MM-dd")
-        }
-
-class AddMonitoringDialog(QDialog):
-    def __init__(self, parent=None):
-        super().__init__(parent, flags=Qt.FramelessWindowHint)
-        self.setModal(True)
-        self.setStyleSheet("""
-            QDialog {
-              background: #2b2b2b;
-              border-radius: 10px;
-            }
-            QLabel, QLineEdit {
-              color: white;
-              font-size: 14px;
-            }
-            QPushButton#ok {
-              background: #8b1fb5;
-              color: white;
-              padding: 6px 12px;
-              border-radius: 4px;
-            }
-            QPushButton#ok:hover {
-              background: #9d2bc9;
-            }
-        """)
-        self.resize(360, 200)
-
-        v = QVBoxLayout(self)
-        v.setContentsMargins(20,20,20,20)
-        title = QLabel("ADD MONITORING")
-        title.setStyleSheet("font-size:24px; font-weight:bold;")
-        v.addWidget(title, alignment=Qt.AlignCenter)
-
-        self.name_edit = QLineEdit()
-        self.name_edit.setPlaceholderText("Monitoring name…")
-        v.addSpacing(10)
-        v.addWidget(QLabel("Name"))
-        v.addWidget(self.name_edit)
-
-        self.topic_edit = QLineEdit()
-        self.topic_edit.setPlaceholderText("Topic identifier (e.g., sensor1)")
-        v.addSpacing(10)
-        v.addWidget(QLabel("Topic"))
-        v.addWidget(self.topic_edit)
-
-        v.addStretch()
-        ok = QPushButton("Add")
-        ok.setObjectName("ok")
-        ok.clicked.connect(self.accept)
-        v.addWidget(ok, alignment=Qt.AlignCenter)
-
-    def get_data(self):
-        return {
-            "name": self.name_edit.text().strip(),
-            "topic": self.topic_edit.text().strip()
-        }
-
-class MQTTClient:
-    def __init__(self, parent):
-        self.parent = parent
-        self.client = mqtt.Client()
-        self.client.on_connect = self.on_connect
-        self.client.on_message = self.on_message
-        self.client.on_disconnect = self.on_disconnect
-        self.connected = False
-        self.monitoring_items = {}
-        
-    def on_connect(self, client, userdata, flags, rc):
-        if rc == 0:
-            self.connected = True
-            print("Connected to MQTT broker")
-            # Subscribe to all monitoring topics
-            for item in self.monitoring_items.values():
-                topic = f"/monitoring/{item['topic']}"
-                client.subscribe(topic)
-                client.subscribe(f"{topic}/error")
-        else:
-            self.connected = False
-            print(f"Failed to connect to MQTT broker: {rc}")
-    
-    def on_message(self, client, userdata, msg):
-        topic = msg.topic
-        payload = msg.payload.decode('utf-8')
-        
-        try:
-            data = json.loads(payload)
-        except json.JSONDecodeError:
-            return
-            
-        # Find the monitoring item by topic
-        for item_id, item in self.monitoring_items.items():
-            if f"/monitoring/{item['topic']}" in topic:
-                if "/error" in topic:
-                    # Handle error message
-                    self.parent.handle_monitoring_error(item_id, item['name'], data)
-                else:
-                    # Handle normal status update
-                    self.parent.update_monitoring_status(item_id, data)
-                break
-    
-    def on_disconnect(self, client, userdata, rc):
-        self.connected = False
-        print("Disconnected from MQTT broker")
-    
-    def connect(self):
-        try:
-            self.client.connect("localhost", 1883, 60)
-            self.client.loop_start()
-        except Exception as e:
-            print(f"Error connecting to MQTT: {e}")
-    
-    def disconnect(self):
-        self.client.loop_stop()
-        self.client.disconnect()
-    
-    def add_monitoring_item(self, item_id, item_data):
-        self.monitoring_items[item_id] = item_data
-        if self.connected:
-            topic = f"/monitoring/{item_data['topic']}"
-            self.client.subscribe(topic)
-            self.client.subscribe(f"{topic}/error")
-    
-    def remove_monitoring_item(self, item_id):
-        if item_id in self.monitoring_items:
-            del self.monitoring_items[item_id]
 
 class NoteReminderApp(QMainWindow):
     def __init__(self):
@@ -361,19 +98,11 @@ class NoteReminderApp(QMainWindow):
         self.setMinimumSize(500, 300)
         self.setMaximumSize(1400, 900)
         
-        # Initialize MQTT client
-        self.mqtt_client = MQTTClient(self)
-        self.monitoring_status = {}  # Track status of monitoring items
-        self.error_notifications = 0  # Track error notifications for badge
-        
         # Load settings and restore window state
         self.settings = load_settings()
         self.restore_window_state()
         
         self.init_ui()
-        
-        # Connect to MQTT after UI is initialized
-        self.mqtt_client.connect()
 
     def restore_window_state(self):
         """Restore window position and size from settings."""
@@ -438,45 +167,78 @@ class NoteReminderApp(QMainWindow):
         mf_layout.setContentsMargins(0,0,0,0)
         mf_layout.addWidget(self.splitter)
 
-        self.overlay = QWidget(self.main_frame)
-        self.overlay.setStyleSheet("background: rgba(0,0,0,0.5);")
-        self.overlay.hide()
-
     def build_notes_panel(self):
         f = QFrame()
         f.setStyleSheet("""
             QFrame {
-              background: #2b2b2b;
+              background: #121212;
               border-top-left-radius: 12px;
               border-bottom-left-radius: 12px;
             }
             QTextEdit {
-              background: #3a3a3a;
-              color: white;
-              border-radius:6px;
-              font-size:14px;
+              background: #121212;
+              color: #FDE047;
+              border: none;
+              font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+              font-size: 14px;
               selection-background-color: #8b1fb5;
+              padding: 8px;
             }
             QTextEdit:focus {
-              border: 1px solid #8b1fb5;
+              border: none;
+            }
+            QLabel {
+              color: white;
             }
         """)
         v = QVBoxLayout(f)
         v.setContentsMargins(15,15,15,15)
 
+        # Header with hamburger menu and NOTE title
         hdr = QHBoxLayout()
-        drag_handle = QLabel("☰")
-        drag_handle.setStyleSheet("color: #888; font-size: 16px;")
-        drag_handle.setToolTip("Click and drag to move window")
-        hdr.addWidget(drag_handle)
+        
+        # Hamburger menu icon
+        hamburger = QLabel()
+        hamburger.setFixedSize(16, 12)
+        hamburger.setStyleSheet("""
+            QLabel {
+                background: transparent;
+                color: #9CA3AF;
+            }
+        """)
+        hamburger.setText("☰")
+        hamburger.setAlignment(Qt.AlignCenter)
+        hdr.addWidget(hamburger)
+        
+        hdr.addSpacing(8)
+        
         lbl = QLabel("NOTE")
-        lbl.setStyleSheet("color:white; font-weight:bold; font-size:20px;")
+        lbl.setStyleSheet("color: white; font-weight: bold; font-size: 16px; font-family: sans-serif;")
         hdr.addWidget(lbl)
         hdr.addStretch()
         v.addLayout(hdr)
 
+        # Add border separator
+        separator = QFrame()
+        separator.setFrameShape(QFrame.HLine)
+        separator.setStyleSheet("border: 1px solid #374151; margin: 8px 0px;")
+        v.addWidget(separator)
+
         self.note_edit = QTextEdit()
-        self.note_edit.setPlaceholderText("Type your note here…")
+        self.note_edit.setPlaceholderText("Enter your notes here...")
+        self.note_edit.setStyleSheet("""
+            QTextEdit {
+                background: transparent;
+                color: #FDE047;
+                border: none;
+                font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+                font-size: 14px;
+                line-height: 1.6;
+            }
+            QTextEdit::placeholder {
+                color: #6B7280;
+            }
+        """)
         note_content = load_note()
         if note_content:
             self.note_edit.setText(note_content)
@@ -502,66 +264,98 @@ class NoteReminderApp(QMainWindow):
         f = QFrame()
         f.setStyleSheet("""
             QFrame {
-              background: #8b1fb5;
+              background: #2a1f3d;
               border-top-right-radius: 12px;
               border-bottom-right-radius: 12px;
             }
             QLabel {
               color: white;
-              font-size:20px;
-              font-weight:bold;
+              font-size: 16px;
+              font-weight: bold;
             }
             QPushButton:hover {
               opacity: 0.8;
             }
-            QTabWidget::pane {
-              border: none;
-              background: transparent;
-            }
-            QTabBar::tab {
-              background: rgba(255,255,255,0.2);
-              color: white;
-              padding: 8px 16px;
-              margin-right: 2px;
-              border-top-left-radius: 6px;
-              border-top-right-radius: 6px;
-            }
-            QTabBar::tab:selected {
-              background: rgba(255,255,255,0.3);
-            }
-            QTabBar::tab:hover {
-              background: rgba(255,255,255,0.25);
-            }
         """)
         self.rem_frame = f
+        self.reminder_minimized = False
+        self.show_add_form = False
 
         v = QVBoxLayout(f)
         v.setContentsMargins(15,15,15,15)
 
+        # Header with title and control buttons
         hdr = QHBoxLayout()
+        lbl = QLabel("REMINDER")
+        lbl.setStyleSheet("color: #F3F4F6; font-weight: bold; font-size: 16px; font-family: sans-serif;")
+        hdr.addWidget(lbl)
         hdr.addStretch()
         
         # Add minimize button
-        minimize = QPushButton("─")
-        minimize.setFixedSize(24,24)
-        minimize.setStyleSheet("background:transparent; color:white; font-weight:bold;")
-        minimize.setToolTip("Minimize")
-        minimize.clicked.connect(self.showMinimized)
-        hdr.addWidget(minimize)
+        self.minimize_btn = QPushButton("─")
+        self.minimize_btn.setFixedSize(24,24)
+        self.minimize_btn.setStyleSheet("""
+            QPushButton {
+                background: transparent; 
+                color: #D1D5DB; 
+                font-weight: bold;
+                border: none;
+                border-radius: 4px;
+            }
+            QPushButton:hover {
+                background: rgba(107, 114, 128, 0.3);
+                color: white;
+            }
+        """)
+        self.minimize_btn.setToolTip("Minimize")
+        self.minimize_btn.clicked.connect(self.toggle_reminder_minimize)
+        hdr.addWidget(self.minimize_btn)
         
         close = QPushButton("✕")
         close.setFixedSize(24,24)
-        close.setStyleSheet("background:transparent; color:white; font-weight:bold;")
+        close.setStyleSheet("""
+            QPushButton {
+                background: transparent; 
+                color: #D1D5DB; 
+                font-weight: bold;
+                border: none;
+                border-radius: 4px;
+            }
+            QPushButton:hover {
+                background: rgba(107, 114, 128, 0.3);
+                color: white;
+            }
+        """)
         close.setToolTip("Close")
         close.clicked.connect(self.close)
         hdr.addWidget(close)
         v.addLayout(hdr)
 
-        # Create tab widget
-        self.tab_widget = QTabWidget()
-        self.tab_widget.addTab(self.build_reminder_tab(), "REMINDER")
-        self.tab_widget.addTab(self.build_monitoring_tab(), "MONITORING")
-        v.addWidget(self.tab_widget)
+        # Add border separator
+        separator = QFrame()
+        separator.setFrameShape(QFrame.HLine)
+        separator.setStyleSheet("border: 1px solid #4A3A5C; margin: 8px 0px;")
+        v.addWidget(separator)
+
+        # Create reminder content widget
+        self.reminder_content = QWidget()
+        reminder_content_layout = QVBoxLayout(self.reminder_content)
+        reminder_content_layout.setContentsMargins(0, 0, 0, 0)
+
+        self.rem_list = QVBoxLayout()
+        self.rem_list.setSpacing(8)
+        self.rem_list.addStretch()
+        reminder_content_layout.addLayout(self.rem_list)
+
+        # Create inline add form
+        self.create_add_form()
+        reminder_content_layout.addWidget(self.add_form_widget)
+
+        # Add reminder button (initially visible)
+        self.create_add_button()
+        reminder_content_layout.addWidget(self.add_button_widget)
+
+        v.addWidget(self.reminder_content)
 
         # Add resize grip
         self.resizer = QSizeGrip(f)
@@ -569,61 +363,353 @@ class NoteReminderApp(QMainWindow):
         self.resizer.setStyleSheet("background:rgba(255,255,255,0.3); border-radius:2px;")
         v.addWidget(self.resizer, alignment=Qt.AlignRight | Qt.AlignBottom)
 
+        self.load_reminders()
         return f
 
-    def build_reminder_tab(self):
-        """Build the reminder tab content."""
-        widget = QWidget()
-        v = QVBoxLayout(widget)
-        v.setContentsMargins(0, 0, 0, 0)
-
-        self.rem_list = QVBoxLayout()
-        self.rem_list.setSpacing(8)
-        self.rem_list.addStretch()
-        v.addLayout(self.rem_list)
-
-        btn = QPushButton("+ Add Reminder")
-        btn.setStyleSheet("""
-            QPushButton {
-              background:black; color:white; padding:6px 12px;
-              border-radius:4px;
-            }
-            QPushButton:hover {
-              background:#333;
+    def create_add_form(self):
+        """Create the inline add reminder form."""
+        self.add_form_widget = QWidget()
+        self.add_form_widget.setStyleSheet("""
+            QWidget {
+                background: transparent;
+                border-top: 1px solid #4A3A5C;
+                padding: 8px 0px;
             }
         """)
-        btn.clicked.connect(self.on_add)
-        v.addWidget(btn, alignment=Qt.AlignRight)
+        
+        form_layout = QVBoxLayout(self.add_form_widget)
+        form_layout.setContentsMargins(0, 16, 0, 0)
+        form_layout.setSpacing(8)
 
-        self.load_reminders()
-        return widget
-
-    def build_monitoring_tab(self):
-        """Build the monitoring tab content."""
-        widget = QWidget()
-        v = QVBoxLayout(widget)
-        v.setContentsMargins(0, 0, 0, 0)
-
-        self.mon_list = QVBoxLayout()
-        self.mon_list.setSpacing(8)
-        self.mon_list.addStretch()
-        v.addLayout(self.mon_list)
-
-        btn = QPushButton("+ Add Monitoring")
-        btn.setStyleSheet("""
-            QPushButton {
-              background:black; color:white; padding:6px 12px;
-              border-radius:4px;
+        # Reminder text input
+        self.reminder_text_input = QLineEdit()
+        self.reminder_text_input.setPlaceholderText("Reminder text")
+        self.reminder_text_input.setStyleSheet("""
+            QLineEdit {
+                background: #3d324a;
+                color: #F3F4F6;
+                border: 1px solid #5a4d66;
+                border-radius: 4px;
+                padding: 8px;
+                font-size: 14px;
             }
-            QPushButton:hover {
-              background:#333;
+            QLineEdit:focus {
+                border-color: #8b5cf6;
+            }
+            QLineEdit::placeholder {
+                color: #9CA3AF;
             }
         """)
-        btn.clicked.connect(self.on_add_monitoring)
-        v.addWidget(btn, alignment=Qt.AlignRight)
+        form_layout.addWidget(self.reminder_text_input)
 
-        self.load_monitoring()
-        return widget
+        # Date input
+        self.reminder_date_input = QDateEdit()
+        self.reminder_date_input.setCalendarPopup(True)
+        self.reminder_date_input.setDate(QDate.currentDate())
+        self.reminder_date_input.setStyleSheet("""
+            QDateEdit {
+                background: #3d324a;
+                color: #F3F4F6;
+                border: 1px solid #5a4d66;
+                border-radius: 4px;
+                padding: 8px;
+                font-size: 14px;
+            }
+            QDateEdit:focus {
+                border-color: #8b5cf6;
+            }
+            QDateEdit::drop-down {
+                subcontrol-origin: padding;
+                subcontrol-position: top right;
+                width: 20px;
+                border-left: 1px solid #5a4d66;
+                background: #3d324a;
+            }
+            QDateEdit::down-arrow {
+                image: none;
+                border: 2px solid #F3F4F6;
+                border-top: none;
+                border-right: none;
+                width: 6px;
+                height: 6px;
+                margin-right: 3px;
+            }
+            QCalendarWidget {
+                background: #2a1f3d;
+                color: #F3F4F6;
+                border: 1px solid #4a3a5c;
+                border-radius: 4px;
+            }
+            QCalendarWidget QWidget#qt_calendar_navigationbar {
+                background: #3d324a;
+                color: #F3F4F6;
+            }
+            QCalendarWidget QToolButton {
+                background: #3d324a;
+                color: #F3F4F6;
+                border: none;
+                border-radius: 4px;
+                padding: 4px;
+                margin: 2px;
+            }
+            QCalendarWidget QToolButton:hover {
+                background: #8b5cf6;
+            }
+            QCalendarWidget QToolButton:pressed {
+                background: #6b46c1;
+            }
+            QCalendarWidget QMenu {
+                background: #3d324a;
+                color: #F3F4F6;
+                border: 1px solid #5a4d66;
+            }
+            QCalendarWidget QSpinBox {
+                background: #3d324a;
+                color: #F3F4F6;
+                border: 1px solid #5a4d66;
+                border-radius: 2px;
+            }
+            QCalendarWidget QTableView {
+                background: #000000;
+                color: #F3F4F6;
+                selection-background-color: #8b5cf6;
+                selection-color: white;
+                gridline-color: #4a3a5c;
+            }
+            QCalendarWidget QTableView::item {
+                padding: 4px;
+            }
+            QCalendarWidget QTableView::item:selected {
+                background: #8b5cf6;
+                color: white;
+            }
+            QCalendarWidget QTableView::item:hover {
+                background: #6b46c1;
+            }
+            QCalendarWidget QHeaderView::section {
+                background: #3d324a;
+                color: #F3F4F6;
+                border: none;
+                padding: 4px;
+                font-weight: bold;
+            }
+        """)
+        form_layout.addWidget(self.reminder_date_input)
+
+        # Add keyboard shortcuts
+        self.reminder_text_input.returnPressed.connect(self.confirm_add_reminder)
+        # Note: QDateEdit doesn't have returnPressed, so we'll handle it differently
+        
+        # Reset styling when user changes date
+        self.reminder_date_input.dateChanged.connect(self.reset_date_input_style)
+
+        # Buttons layout
+        buttons_layout = QHBoxLayout()
+        buttons_layout.setSpacing(8)
+
+        # Add button
+        self.add_confirm_btn = QPushButton("Add")
+        self.add_confirm_btn.setStyleSheet("""
+            QPushButton {
+                background: #6b46c1;
+                color: white;
+                border: none;
+                padding: 8px 16px;
+                border-radius: 4px;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background: #7c3aed;
+            }
+        """)
+        self.add_confirm_btn.clicked.connect(self.confirm_add_reminder)
+        buttons_layout.addWidget(self.add_confirm_btn)
+
+        # Cancel button
+        self.cancel_btn = QPushButton("Cancel")
+        self.cancel_btn.setStyleSheet("""
+            QPushButton {
+                background: transparent;
+                color: #D1D5DB;
+                border: 1px solid #5a4d66;
+                padding: 8px 16px;
+                border-radius: 4px;
+            }
+            QPushButton:hover {
+                color: white;
+                background: rgba(107, 114, 128, 0.3);
+            }
+        """)
+        self.cancel_btn.clicked.connect(self.cancel_add_reminder)
+        buttons_layout.addWidget(self.cancel_btn)
+
+        form_layout.addLayout(buttons_layout)
+        
+        # Initially hide the form
+        self.add_form_widget.hide()
+
+    def create_add_button(self):
+        """Create the add reminder button."""
+        self.add_button_widget = QWidget()
+        self.add_button_widget.setStyleSheet("""
+            QWidget {
+                background: transparent;
+                border-top: 1px solid #4A3A5C;
+                padding: 8px 0px;
+            }
+        """)
+        
+        button_layout = QVBoxLayout(self.add_button_widget)
+        button_layout.setContentsMargins(0, 16, 0, 0)
+
+        self.add_btn = QPushButton("+ Add Reminder")
+        self.add_btn.setStyleSheet("""
+            QPushButton {
+              background: #6b46c1; 
+              color: white; 
+              padding: 8px 16px;
+              border: none;
+              border-radius: 4px;
+              font-weight: bold;
+            }
+            QPushButton:hover {
+              background: #7c3aed;
+            }
+        """)
+        self.add_btn.clicked.connect(self.show_add_form_inline)
+        button_layout.addWidget(self.add_btn, alignment=Qt.AlignCenter)
+
+    def show_add_form_inline(self):
+        """Show the inline add form and hide the add button."""
+        self.show_add_form = True
+        self.add_button_widget.hide()
+        self.add_form_widget.show()
+        self.reminder_text_input.setFocus()
+        self.reminder_text_input.clear()
+
+    def cancel_add_reminder(self):
+        """Cancel adding reminder and show the add button."""
+        self.show_add_form = False
+        self.add_form_widget.hide()
+        self.add_button_widget.show()
+        self.reminder_text_input.clear()
+        self.reset_date_input_style()
+
+    def reset_date_input_style(self):
+        """Reset the date input styling to normal."""
+        self.reminder_date_input.setStyleSheet("""
+            QDateEdit {
+                background: #3d324a;
+                color: #F3F4F6;
+                border: 1px solid #5a4d66;
+                border-radius: 4px;
+                padding: 8px;
+                font-size: 14px;
+            }
+            QDateEdit:focus {
+                border-color: #8b5cf6;
+            }
+            QDateEdit::drop-down {
+                subcontrol-origin: padding;
+                subcontrol-position: top right;
+                width: 20px;
+                border-left: 1px solid #5a4d66;
+                background: #3d324a;
+            }
+            QDateEdit::down-arrow {
+                image: none;
+                border: 2px solid #F3F4F6;
+                border-top: none;
+                border-right: none;
+                width: 6px;
+                height: 6px;
+                margin-right: 3px;
+            }
+            QCalendarWidget {
+                background: #2a1f3d;
+                color: #F3F4F6;
+                border: 1px solid #4a3a5c;
+                border-radius: 4px;
+            }
+            QCalendarWidget QWidget#qt_calendar_navigationbar {
+                background: #3d324a;
+                color: #F3F4F6;
+            }
+            QCalendarWidget QToolButton {
+                background: #3d324a;
+                color: #F3F4F6;
+                border: none;
+                border-radius: 4px;
+                padding: 4px;
+                margin: 2px;
+            }
+            QCalendarWidget QToolButton:hover {
+                background: #8b5cf6;
+            }
+            QCalendarWidget QToolButton:pressed {
+                background: #6b46c1;
+            }
+            QCalendarWidget QMenu {
+                background: #3d324a;
+                color: #F3F4F6;
+                border: 1px solid #5a4d66;
+            }
+            QCalendarWidget QSpinBox {
+                background: #3d324a;
+                color: #F3F4F6;
+                border: 1px solid #5a4d66;
+                border-radius: 2px;
+            }
+            QCalendarWidget QTableView {
+                background: #000000;
+                color: #F3F4F6;
+                selection-background-color: #8b5cf6;
+                selection-color: white;
+                gridline-color: #4a3a5c;
+            }
+            QCalendarWidget QTableView::item {
+                padding: 4px;
+            }
+            QCalendarWidget QTableView::item:selected {
+                background: #8b5cf6;
+                color: white;
+            }
+            QCalendarWidget QTableView::item:hover {
+                background: #6b46c1;
+            }
+            QCalendarWidget QHeaderView::section {
+                background: #3d324a;
+                color: #F3F4F6;
+                border: none;
+                padding: 4px;
+                font-weight: bold;
+            }
+        """)
+
+    def confirm_add_reminder(self):
+        """Add the reminder and hide the form."""
+        text = self.reminder_text_input.text().strip()
+        date = self.reminder_date_input.date().toString("yyyy-MM-dd")
+        
+        if text:  # Only check if text is provided, date is always valid from QDateEdit
+            # Add the reminder
+            lst = load_rems()
+            lst.append({"name": text, "date": date})
+            save_rems(lst)
+            self.load_reminders()
+            
+            # Hide form and show button
+            self.cancel_add_reminder()
+
+    def toggle_reminder_minimize(self):
+        """Toggle the reminder panel minimize state."""
+        self.reminder_minimized = not self.reminder_minimized
+        if self.reminder_minimized:
+            self.reminder_content.hide()
+            self.minimize_btn.setText("+")
+        else:
+            self.reminder_content.show()
+            self.minimize_btn.setText("─")
 
     def load_reminders(self):
         """Load and display reminders with improved performance."""
@@ -639,11 +725,37 @@ class NoteReminderApp(QMainWindow):
 
     def create_reminder_widget(self, idx, rem):
         """Create a single reminder widget."""
-        h = QHBoxLayout()
-        h.setContentsMargins(5, 2, 5, 2)
+        container = QWidget()
+        container.setStyleSheet("""
+            QWidget {
+                background: #3d324a;
+                border-radius: 4px;
+                padding: 2px;
+            }
+            QWidget:hover {
+                background: rgba(107, 114, 128, 0.2);
+            }
+        """)
         
-        lbl = QLabel(f"• {rem.get('name', 'Unnamed')}  ({rem.get('date', 'No date')})")
-        lbl.setStyleSheet("color:white; font-size:14px; font-weight:normal;")
+        h = QHBoxLayout(container)
+        h.setContentsMargins(12, 8, 8, 8)
+        
+        # Format the date to match reference: (YYYY-MM-DD)
+        reminder_text = rem.get('name', 'Unnamed')
+        reminder_date = rem.get('date', 'No date')
+        formatted_date = f"({reminder_date})"
+        
+        # Create the label with bullet point, text, and date
+        lbl = QLabel(f"• {reminder_text} {formatted_date}")
+        lbl.setStyleSheet("""
+            QLabel {
+                color: #FDE68A; 
+                font-size: 14px; 
+                font-weight: normal;
+                background: transparent;
+                padding: 0px;
+            }
+        """)
         lbl.setWordWrap(True)
         h.addWidget(lbl, 1)  # Give label more space
         
@@ -651,22 +763,21 @@ class NoteReminderApp(QMainWindow):
         del_btn.setFixedSize(20, 20)
         del_btn.setStyleSheet("""
             QPushButton {
-                background:#B71A1A; 
-                color:white; 
-                border:none; 
-                border-radius:10px;
-                font-weight:bold;
+                background: #EF4444; 
+                color: white; 
+                border: none; 
+                border-radius: 10px;
+                font-weight: bold;
+                font-size: 12px;
             }
             QPushButton:hover {
-                background:#D91A1A;
+                background: #DC2626;
             }
         """)
         del_btn.setToolTip("Delete reminder")
         del_btn.clicked.connect(lambda _, ix=idx: self.delete_reminder(ix))
         h.addWidget(del_btn)
         
-        container = QWidget()
-        container.setLayout(h)
         self.rem_list.insertWidget(self.rem_list.count()-1, container)
 
     def delete_reminder(self, index):
@@ -676,152 +787,6 @@ class NoteReminderApp(QMainWindow):
             rems.pop(index)
             save_rems(rems)
             self.load_reminders()
-            
-    def on_add(self):
-        """Handle adding new reminders."""
-        self.overlay.setGeometry(self.main_frame.rect())
-        self.overlay.show()
-        dlg = AddDialog(self)
-        dlg.move(self.geometry().center() - dlg.rect().center())
-        if dlg.exec_():
-            data = dlg.get_data()
-            if data['name']:  # Only add if name is not empty
-                lst = load_rems()
-                lst.append(data)
-                save_rems(lst)
-                self.load_reminders()
-        self.overlay.hide()
-
-    def on_add_monitoring(self):
-        """Handle adding new monitoring items."""
-        self.overlay.setGeometry(self.main_frame.rect())
-        self.overlay.show()
-        dlg = AddMonitoringDialog(self)
-        dlg.move(self.geometry().center() - dlg.rect().center())
-        if dlg.exec_():
-            data = dlg.get_data()
-            if data['name'] and data['topic']:  # Only add if both name and topic are not empty
-                lst = load_monitoring()
-                item_id = len(lst)  # Simple ID generation
-                lst.append(data)
-                save_monitoring(lst)
-                self.mqtt_client.add_monitoring_item(item_id, data)
-                self.load_monitoring()
-        self.overlay.hide()
-
-    def load_monitoring(self):
-        """Load and display monitoring items."""
-        # Clear existing widgets more efficiently
-        while self.mon_list.count() > 1:  # Keep the stretch
-            item = self.mon_list.takeAt(0)
-            if item.widget():
-                item.widget().deleteLater()
-
-        monitoring_items = load_monitoring()
-        for idx, item in enumerate(monitoring_items):
-            self.create_monitoring_widget(idx, item)
-
-    def create_monitoring_widget(self, idx, item):
-        """Create a single monitoring widget."""
-        h = QHBoxLayout()
-        h.setContentsMargins(5, 2, 5, 2)
-        
-        # Status dot
-        status_dot = QLabel("●")
-        status_dot.setFixedSize(20, 20)
-        status_dot.setAlignment(Qt.AlignCenter)
-        status_dot.setStyleSheet("color: gray; font-size: 16px;")
-        status_dot.setObjectName(f"status_dot_{idx}")
-        h.addWidget(status_dot)
-        
-        lbl = QLabel(f"{item.get('name', 'Unnamed')} ({item.get('topic', 'No topic')})")
-        lbl.setStyleSheet("color:white; font-size:14px; font-weight:normal;")
-        lbl.setWordWrap(True)
-        h.addWidget(lbl, 1)  # Give label more space
-        
-        del_btn = QPushButton("×")
-        del_btn.setFixedSize(20, 20)
-        del_btn.setStyleSheet("""
-            QPushButton {
-                background:#B71A1A; 
-                color:white; 
-                border:none; 
-                border-radius:10px;
-                font-weight:bold;
-            }
-            QPushButton:hover {
-                background:#D91A1A;
-            }
-        """)
-        del_btn.setToolTip("Delete monitoring")
-        del_btn.clicked.connect(lambda _, ix=idx: self.delete_monitoring(ix))
-        h.addWidget(del_btn)
-        
-        container = QWidget()
-        container.setLayout(h)
-        container.setObjectName(f"monitoring_item_{idx}")
-        self.mon_list.insertWidget(self.mon_list.count()-1, container)
-
-    def delete_monitoring(self, index):
-        """Delete a monitoring item with validation."""
-        items = load_monitoring()
-        if 0 <= index < len(items):
-            items.pop(index)
-            save_monitoring(items)
-            self.mqtt_client.remove_monitoring_item(index)
-            self.load_monitoring()
-
-    def update_monitoring_status(self, item_id, data):
-        """Update monitoring status based on MQTT data."""
-        self.monitoring_status[item_id] = data
-        # Update status dot to blue (normal)
-        status_dot = self.findChild(QLabel, f"status_dot_{item_id}")
-        if status_dot:
-            status_dot.setStyleSheet("color: blue; font-size: 16px;")
-
-    def handle_monitoring_error(self, item_id, name, error_data):
-        """Handle monitoring error notifications."""
-        self.monitoring_status[item_id] = error_data
-        self.error_notifications += 1
-        
-        # Update status dot to red (error)
-        status_dot = self.findChild(QLabel, f"status_dot_{item_id}")
-        if status_dot:
-            status_dot.setStyleSheet("color: red; font-size: 16px;")
-        
-        # Update monitoring tab badge
-        self.update_monitoring_tab_badge()
-        
-        # Show notification
-        error_type = error_data.get('error_type', 'Unknown')
-        message = f"Detected Anomalies on {name} error detail: {error_type}"
-        self.show_notification(message)
-
-    def update_monitoring_tab_badge(self):
-        """Update the monitoring tab to show error badge."""
-        if self.error_notifications > 0:
-            tab_text = f"MONITORING ({self.error_notifications})"
-        else:
-            tab_text = "MONITORING"
-        self.tab_widget.setTabText(1, tab_text)
-
-    def show_notification(self, message):
-        """Show system notification."""
-        try:
-            # Try to show system tray notification
-            if not hasattr(self, 'tray_icon'):
-                self.tray_icon = QSystemTrayIcon(self)
-                self.tray_icon.setIcon(QIcon("./Kazimierz.png"))
-            
-            self.tray_icon.show()
-            self.tray_icon.showMessage("Monitoring Alert", message, QSystemTrayIcon.Warning, 5000)
-        except:
-            # Fallback to message box if system tray is not available
-            msg_box = QMessageBox(self)
-            msg_box.setWindowTitle("Monitoring Alert")
-            msg_box.setText(message)
-            msg_box.setIcon(QMessageBox.Warning)
-            msg_box.exec_()
 
     def mousePressEvent(self, event):
         """Handle mouse press for window dragging."""
@@ -878,19 +843,15 @@ class NoteReminderApp(QMainWindow):
             self._save_timer.stop()
             save_note(self.note_edit.toPlainText())
         
-        # Disconnect from MQTT
-        if hasattr(self, 'mqtt_client'):
-            self.mqtt_client.disconnect()
-        
         self.save_window_state()
         super().closeEvent(event)
 
 if __name__ == '__main__':
-    app = QApplication(sys.argv)
+    # Enable high DPI support before creating QApplication
+    QApplication.setAttribute(Qt.AA_EnableHighDpiScaling, True)
+    QApplication.setAttribute(Qt.AA_UseHighDpiPixmaps, True)
     
-    # Enable high DPI support
-    app.setAttribute(Qt.AA_EnableHighDpiScaling, True)
-    app.setAttribute(Qt.AA_UseHighDpiPixmaps, True)
+    app = QApplication(sys.argv)
     
     window = NoteReminderApp()
     window.show()
