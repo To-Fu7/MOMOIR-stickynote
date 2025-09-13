@@ -1,19 +1,35 @@
 import sys
 import os
 import json
+import threading
+import time
 from datetime import date
 from PyQt5.QtGui import QIcon, QColor
-from PyQt5.QtCore import Qt, QPoint, QDate, QSettings
+from PyQt5.QtCore import Qt, QPoint, QDate, QSettings, QTimer, pyqtSignal, QObject
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QSplitter,
     QFrame, QTextEdit, QPushButton, QLabel,
     QHBoxLayout, QVBoxLayout, QDialog, QCalendarWidget,
-    QLineEdit, QSizeGrip, QGraphicsDropShadowEffect, QDateEdit
+    QLineEdit, QSizeGrip, QGraphicsDropShadowEffect, QDateEdit,
+    QTabWidget, QSystemTrayIcon, QMessageBox
 )
+try:
+    import paho.mqtt.client as mqtt
+    MQTT_AVAILABLE = True
+except ImportError:
+    MQTT_AVAILABLE = False
+    print("Warning: paho-mqtt not available. MQTT functionality will be disabled.")
 
 NOTE_FILE = 'sticky_note.json'
 REM_FILE  = 'reminders.json'
 SETTINGS_FILE = 'app_settings.json'
+MONITORING_FILE = 'monitoring.json'
+
+class MQTTSignal(QObject):
+    """Signal class for MQTT communication with GUI thread."""
+    data_received = pyqtSignal(str, str)  # topic, message
+    status_changed = pyqtSignal(str, str)  # topic, status
+    error_received = pyqtSignal(str, str, str)  # topic, error_type, message
 
 def load_note():
     """Load note content from file with proper error handling."""
@@ -80,6 +96,26 @@ def save_settings(settings):
     except (IOError, UnicodeEncodeError) as e:
         print(f"Error saving settings: {e}")
 
+def load_monitoring():
+    """Load monitoring configurations from file with proper error handling."""
+    if not os.path.exists(MONITORING_FILE):
+        return []
+    try:
+        with open(MONITORING_FILE, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        return data if isinstance(data, list) else []
+    except (json.JSONDecodeError, IOError, UnicodeDecodeError) as e:
+        print(f"Error loading monitoring: {e}")
+        return []
+
+def save_monitoring(lst):
+    """Save monitoring configurations to file with proper error handling."""
+    try:
+        with open(MONITORING_FILE, 'w', encoding='utf-8') as f:
+            json.dump(lst, f, ensure_ascii=False, indent=2)
+    except (IOError, UnicodeEncodeError) as e:
+        print(f"Error saving monitoring: {e}")
+
 
 
 class NoteReminderApp(QMainWindow):
@@ -102,7 +138,137 @@ class NoteReminderApp(QMainWindow):
         self.settings = load_settings()
         self.restore_window_state()
         
+        # Initialize MQTT
+        self.mqtt_signal = MQTTSignal()
+        self.mqtt_client = None
+        self.monitoring_status = {}  # Store status for each monitoring node
+        self.notification_count = 0
+        
+        # Initialize system tray for notifications
+        self.init_system_tray()
+        
         self.init_ui()
+
+    def init_system_tray(self):
+        """Initialize system tray for notifications."""
+        if QSystemTrayIcon.isSystemTrayAvailable():
+            self.tray_icon = QSystemTrayIcon(self)
+            self.tray_icon.setIcon(QIcon("./Kazimierz.png"))
+            self.tray_icon.setToolTip("Memoir - Monitoring System")
+            self.tray_icon.show()
+
+    def init_mqtt(self):
+        """Initialize MQTT client if available."""
+        if not MQTT_AVAILABLE:
+            return
+            
+        self.mqtt_client = mqtt.Client()
+        self.mqtt_client.on_connect = self.on_mqtt_connect
+        self.mqtt_client.on_message = self.on_mqtt_message
+        self.mqtt_client.on_disconnect = self.on_mqtt_disconnect
+        
+        # Connect MQTT signals
+        self.mqtt_signal.data_received.connect(self.handle_mqtt_data)
+        self.mqtt_signal.status_changed.connect(self.handle_status_change)
+        self.mqtt_signal.error_received.connect(self.handle_error_notification)
+        
+        # Start MQTT connection in a separate thread
+        mqtt_thread = threading.Thread(target=self.connect_mqtt, daemon=True)
+        mqtt_thread.start()
+
+    def connect_mqtt(self):
+        """Connect to MQTT broker in a separate thread."""
+        try:
+            self.mqtt_client.connect("localhost", 1883, 60)
+            self.mqtt_client.loop_forever()
+        except Exception as e:
+            print(f"MQTT connection error: {e}")
+
+    def on_mqtt_connect(self, client, userdata, flags, rc):
+        """Handle MQTT connection."""
+        if rc == 0:
+            print("Connected to MQTT broker")
+            # Subscribe to all monitoring topics
+            client.subscribe("/monitoring/+")
+            client.subscribe("/monitoring/+/error")
+        else:
+            print(f"Failed to connect to MQTT broker: {rc}")
+
+    def on_mqtt_message(self, client, userdata, msg):
+        """Handle incoming MQTT messages."""
+        topic = msg.topic
+        message = msg.payload.decode('utf-8')
+        self.mqtt_signal.data_received.emit(topic, message)
+
+    def on_mqtt_disconnect(self, client, userdata, rc):
+        """Handle MQTT disconnection."""
+        print("Disconnected from MQTT broker")
+
+    def handle_mqtt_data(self, topic, message):
+        """Handle MQTT data in GUI thread."""
+        try:
+            data = json.loads(message)
+            status = data.get('status', 'unknown')
+            
+            # Extract monitoring node name from topic
+            if topic.startswith('/monitoring/'):
+                node_name = topic.split('/')[-1]
+                if topic.endswith('/error'):
+                    node_name = topic.split('/')[-2]
+                    # Handle error message
+                    error_type = data.get('error_type', 'unknown')
+                    self.mqtt_signal.error_received.emit(node_name, error_type, message)
+                else:
+                    # Handle normal status
+                    self.mqtt_signal.status_changed.emit(node_name, status)
+                    
+        except json.JSONDecodeError:
+            print(f"Invalid JSON received on topic {topic}: {message}")
+
+    def handle_status_change(self, node_name, status):
+        """Handle status changes for monitoring nodes."""
+        self.monitoring_status[node_name] = status
+        # Update UI if monitoring tab is active
+        if hasattr(self, 'monitoring_widgets'):
+            self.update_monitoring_status(node_name, status)
+
+    def handle_error_notification(self, node_name, error_type, message):
+        """Handle error notifications."""
+        self.monitoring_status[node_name] = 'error'
+        self.notification_count += 1
+        
+        # Update UI
+        if hasattr(self, 'monitoring_widgets'):
+            self.update_monitoring_status(node_name, 'error')
+            self.update_notification_badge()
+        
+        # Show system notification
+        notification_msg = f"Detected Anomalies on {node_name} error detail: {error_type}"
+        self.show_notification(notification_msg)
+
+    def show_notification(self, message):
+        """Show system notification."""
+        if hasattr(self, 'tray_icon') and self.tray_icon.isVisible():
+            self.tray_icon.showMessage("Memoir Alert", message, QSystemTrayIcon.Warning, 5000)
+
+    def update_monitoring_status(self, node_name, status):
+        """Update monitoring status in UI."""
+        if hasattr(self, 'monitoring_widgets') and node_name in self.monitoring_widgets:
+            widget = self.monitoring_widgets[node_name]
+            status_dot = widget.findChild(QLabel, "status_dot")
+            if status_dot:
+                if status == 'error':
+                    status_dot.setStyleSheet("background: #EF4444; border-radius: 6px;")
+                elif status == 'normal':
+                    status_dot.setStyleSheet("background: #3B82F6; border-radius: 6px;")
+                else:
+                    status_dot.setStyleSheet("background: #6B7280; border-radius: 6px;")
+
+    def update_notification_badge(self):
+        """Update notification badge on monitoring tab."""
+        if hasattr(self, 'monitoring_tab') and self.notification_count > 0:
+            # Add badge to tab text
+            self.monitoring_tab.setText(f"Monitoring ({self.notification_count})")
 
     def restore_window_state(self):
         """Restore window position and size from settings."""
@@ -166,6 +332,9 @@ class NoteReminderApp(QMainWindow):
         mf_layout = QHBoxLayout(self.main_frame)
         mf_layout.setContentsMargins(0,0,0,0)
         mf_layout.addWidget(self.splitter)
+        
+        # Initialize MQTT after UI is ready
+        self.init_mqtt()
 
     def build_notes_panel(self):
         f = QFrame()
@@ -276,6 +445,25 @@ class NoteReminderApp(QMainWindow):
             QPushButton:hover {
               opacity: 0.8;
             }
+            QTabWidget::pane {
+                border: none;
+                background: transparent;
+            }
+            QTabBar::tab {
+                background: #3d324a;
+                color: #D1D5DB;
+                padding: 8px 16px;
+                margin-right: 2px;
+                border-top-left-radius: 4px;
+                border-top-right-radius: 4px;
+            }
+            QTabBar::tab:selected {
+                background: #6b46c1;
+                color: white;
+            }
+            QTabBar::tab:hover {
+                background: #5a3a8a;
+            }
         """)
         self.rem_frame = f
         self.reminder_minimized = False
@@ -337,6 +525,55 @@ class NoteReminderApp(QMainWindow):
         separator.setStyleSheet("border: 1px solid #4A3A5C; margin: 8px 0px;")
         v.addWidget(separator)
 
+        # Create tab widget
+        self.tab_widget = QTabWidget()
+        self.tab_widget.setStyleSheet("""
+            QTabWidget::pane {
+                border: none;
+                background: transparent;
+            }
+            QTabBar::tab {
+                background: #3d324a;
+                color: #D1D5DB;
+                padding: 8px 16px;
+                margin-right: 2px;
+                border-top-left-radius: 4px;
+                border-top-right-radius: 4px;
+            }
+            QTabBar::tab:selected {
+                background: #6b46c1;
+                color: white;
+            }
+            QTabBar::tab:hover {
+                background: #5a3a8a;
+            }
+        """)
+
+        # Create reminder tab
+        self.reminder_tab = self.build_reminder_tab()
+        self.tab_widget.addTab(self.reminder_tab, "Reminder")
+
+        # Create monitoring tab
+        self.monitoring_tab_widget = self.build_monitoring_tab()
+        self.monitoring_tab = self.tab_widget.addTab(self.monitoring_tab_widget, "Monitoring")
+
+        v.addWidget(self.tab_widget)
+
+        # Add resize grip
+        self.resizer = QSizeGrip(f)
+        self.resizer.setFixedSize(12, 12)
+        self.resizer.setStyleSheet("background:rgba(255,255,255,0.3); border-radius:2px;")
+        v.addWidget(self.resizer, alignment=Qt.AlignRight | Qt.AlignBottom)
+
+        self.load_reminders()
+        return f
+
+    def build_reminder_tab(self):
+        """Build the reminder tab content."""
+        tab_widget = QWidget()
+        tab_layout = QVBoxLayout(tab_widget)
+        tab_layout.setContentsMargins(0, 0, 0, 0)
+
         # Create reminder content widget
         self.reminder_content = QWidget()
         reminder_content_layout = QVBoxLayout(self.reminder_content)
@@ -355,16 +592,42 @@ class NoteReminderApp(QMainWindow):
         self.create_add_button()
         reminder_content_layout.addWidget(self.add_button_widget)
 
-        v.addWidget(self.reminder_content)
+        tab_layout.addWidget(self.reminder_content)
+        return tab_widget
 
-        # Add resize grip
-        self.resizer = QSizeGrip(f)
-        self.resizer.setFixedSize(12, 12)
-        self.resizer.setStyleSheet("background:rgba(255,255,255,0.3); border-radius:2px;")
-        v.addWidget(self.resizer, alignment=Qt.AlignRight | Qt.AlignBottom)
+    def build_monitoring_tab(self):
+        """Build the monitoring tab content."""
+        tab_widget = QWidget()
+        tab_layout = QVBoxLayout(tab_widget)
+        tab_layout.setContentsMargins(0, 0, 0, 0)
 
-        self.load_reminders()
-        return f
+        # Create monitoring content widget
+        self.monitoring_content = QWidget()
+        monitoring_content_layout = QVBoxLayout(self.monitoring_content)
+        monitoring_content_layout.setContentsMargins(0, 0, 0, 0)
+
+        self.monitoring_list = QVBoxLayout()
+        self.monitoring_list.setSpacing(8)
+        self.monitoring_list.addStretch()
+        monitoring_content_layout.addLayout(self.monitoring_list)
+
+        # Create inline add monitoring form
+        self.create_add_monitoring_form()
+        monitoring_content_layout.addWidget(self.add_monitoring_form_widget)
+
+        # Add monitoring button (initially visible)
+        self.create_add_monitoring_button()
+        monitoring_content_layout.addWidget(self.add_monitoring_button_widget)
+
+        tab_layout.addWidget(self.monitoring_content)
+        
+        # Initialize monitoring widgets dictionary
+        self.monitoring_widgets = {}
+        
+        # Load existing monitoring configurations
+        self.load_monitoring_configs()
+        
+        return tab_widget
 
     def create_add_form(self):
         """Create the inline add reminder form."""
@@ -470,7 +733,7 @@ class NoteReminderApp(QMainWindow):
                 border-radius: 2px;
             }
             QCalendarWidget QTableView {
-                background: #000000;
+                background: #2a1f3d;
                 color: #F3F4F6;
                 selection-background-color: #8b5cf6;
                 selection-color: white;
@@ -579,6 +842,260 @@ class NoteReminderApp(QMainWindow):
         self.add_btn.clicked.connect(self.show_add_form_inline)
         button_layout.addWidget(self.add_btn, alignment=Qt.AlignCenter)
 
+    def create_add_monitoring_form(self):
+        """Create the inline add monitoring form."""
+        self.add_monitoring_form_widget = QWidget()
+        self.add_monitoring_form_widget.setStyleSheet("""
+            QWidget {
+                background: transparent;
+                border-top: 1px solid #4A3A5C;
+                padding: 8px 0px;
+            }
+        """)
+        
+        form_layout = QVBoxLayout(self.add_monitoring_form_widget)
+        form_layout.setContentsMargins(0, 16, 0, 0)
+        form_layout.setSpacing(8)
+
+        # Monitoring name input
+        self.monitoring_name_input = QLineEdit()
+        self.monitoring_name_input.setPlaceholderText("Monitoring name")
+        self.monitoring_name_input.setStyleSheet("""
+            QLineEdit {
+                background: #3d324a;
+                color: #F3F4F6;
+                border: 1px solid #5a4d66;
+                border-radius: 4px;
+                padding: 8px;
+                font-size: 14px;
+            }
+            QLineEdit:focus {
+                border-color: #8b5cf6;
+            }
+            QLineEdit::placeholder {
+                color: #9CA3AF;
+            }
+        """)
+        form_layout.addWidget(self.monitoring_name_input)
+
+        # Topic input
+        self.monitoring_topic_input = QLineEdit()
+        self.monitoring_topic_input.setPlaceholderText("Topic (e.g., sensor1, camera1)")
+        self.monitoring_topic_input.setStyleSheet("""
+            QLineEdit {
+                background: #3d324a;
+                color: #F3F4F6;
+                border: 1px solid #5a4d66;
+                border-radius: 4px;
+                padding: 8px;
+                font-size: 14px;
+            }
+            QLineEdit:focus {
+                border-color: #8b5cf6;
+            }
+            QLineEdit::placeholder {
+                color: #9CA3AF;
+            }
+        """)
+        form_layout.addWidget(self.monitoring_topic_input)
+
+        # Add keyboard shortcuts
+        self.monitoring_name_input.returnPressed.connect(self.confirm_add_monitoring)
+        self.monitoring_topic_input.returnPressed.connect(self.confirm_add_monitoring)
+
+        # Buttons layout
+        buttons_layout = QHBoxLayout()
+        buttons_layout.setSpacing(8)
+
+        # Add button
+        self.add_monitoring_confirm_btn = QPushButton("Add")
+        self.add_monitoring_confirm_btn.setStyleSheet("""
+            QPushButton {
+                background: #6b46c1;
+                color: white;
+                border: none;
+                padding: 8px 16px;
+                border-radius: 4px;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background: #7c3aed;
+            }
+        """)
+        self.add_monitoring_confirm_btn.clicked.connect(self.confirm_add_monitoring)
+        buttons_layout.addWidget(self.add_monitoring_confirm_btn)
+
+        # Cancel button
+        self.cancel_monitoring_btn = QPushButton("Cancel")
+        self.cancel_monitoring_btn.setStyleSheet("""
+            QPushButton {
+                background: transparent;
+                color: #D1D5DB;
+                border: 1px solid #5a4d66;
+                padding: 8px 16px;
+                border-radius: 4px;
+            }
+            QPushButton:hover {
+                color: white;
+                background: rgba(107, 114, 128, 0.3);
+            }
+        """)
+        self.cancel_monitoring_btn.clicked.connect(self.cancel_add_monitoring)
+        buttons_layout.addWidget(self.cancel_monitoring_btn)
+
+        form_layout.addLayout(buttons_layout)
+        
+        # Initially hide the form
+        self.add_monitoring_form_widget.hide()
+
+    def create_add_monitoring_button(self):
+        """Create the add monitoring button."""
+        self.add_monitoring_button_widget = QWidget()
+        self.add_monitoring_button_widget.setStyleSheet("""
+            QWidget {
+                background: transparent;
+                border-top: 1px solid #4A3A5C;
+                padding: 8px 0px;
+            }
+        """)
+        
+        button_layout = QVBoxLayout(self.add_monitoring_button_widget)
+        button_layout.setContentsMargins(0, 16, 0, 0)
+
+        self.add_monitoring_btn = QPushButton("+ Add Monitoring")
+        self.add_monitoring_btn.setStyleSheet("""
+            QPushButton {
+              background: #6b46c1; 
+              color: white; 
+              padding: 8px 16px;
+              border: none;
+              border-radius: 4px;
+              font-weight: bold;
+            }
+            QPushButton:hover {
+              background: #7c3aed;
+            }
+        """)
+        self.add_monitoring_btn.clicked.connect(self.show_add_monitoring_form_inline)
+        button_layout.addWidget(self.add_monitoring_btn, alignment=Qt.AlignCenter)
+
+    def show_add_monitoring_form_inline(self):
+        """Show the inline add monitoring form and hide the add button."""
+        self.add_monitoring_button_widget.hide()
+        self.add_monitoring_form_widget.show()
+        self.monitoring_name_input.setFocus()
+        self.monitoring_name_input.clear()
+        self.monitoring_topic_input.clear()
+
+    def cancel_add_monitoring(self):
+        """Cancel adding monitoring and show the add button."""
+        self.add_monitoring_form_widget.hide()
+        self.add_monitoring_button_widget.show()
+        self.monitoring_name_input.clear()
+        self.monitoring_topic_input.clear()
+
+    def confirm_add_monitoring(self):
+        """Add the monitoring configuration and hide the form."""
+        name = self.monitoring_name_input.text().strip()
+        topic = self.monitoring_topic_input.text().strip()
+        
+        if name and topic:
+            # Add the monitoring configuration
+            configs = load_monitoring()
+            configs.append({"name": name, "topic": topic})
+            save_monitoring(configs)
+            self.load_monitoring_configs()
+            
+            # Hide form and show button
+            self.cancel_add_monitoring()
+
+    def load_monitoring_configs(self):
+        """Load and display monitoring configurations."""
+        # Clear existing widgets more efficiently
+        while self.monitoring_list.count() > 1:  # Keep the stretch
+            item = self.monitoring_list.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+
+        self.monitoring_widgets.clear()
+        configs = load_monitoring()
+        for idx, config in enumerate(configs):
+            self.create_monitoring_widget(idx, config)
+
+    def create_monitoring_widget(self, idx, config):
+        """Create a single monitoring widget."""
+        container = QWidget()
+        container.setStyleSheet("""
+            QWidget {
+                background: #3d324a;
+                border-radius: 4px;
+                padding: 2px;
+            }
+            QWidget:hover {
+                background: rgba(107, 114, 128, 0.2);
+            }
+        """)
+        
+        h = QHBoxLayout(container)
+        h.setContentsMargins(12, 8, 8, 8)
+        
+        # Get monitoring name and topic
+        monitoring_name = config.get('name', 'Unnamed')
+        monitoring_topic = config.get('topic', 'No topic')
+        
+        # Create the label with bullet point, name, and topic
+        lbl = QLabel(f"• {monitoring_name} ({monitoring_topic})")
+        lbl.setStyleSheet("""
+            QLabel {
+                color: #FDE68A; 
+                font-size: 14px; 
+                font-weight: normal;
+                background: transparent;
+                padding: 0px;
+            }
+        """)
+        lbl.setWordWrap(True)
+        h.addWidget(lbl, 1)  # Give label more space
+        
+        # Status dot
+        status_dot = QLabel()
+        status_dot.setFixedSize(12, 12)
+        status_dot.setObjectName("status_dot")
+        status_dot.setStyleSheet("background: #6B7280; border-radius: 6px;")  # Default gray
+        h.addWidget(status_dot)
+        
+        del_btn = QPushButton("×")
+        del_btn.setFixedSize(20, 20)
+        del_btn.setStyleSheet("""
+            QPushButton {
+                background: #EF4444; 
+                color: white; 
+                border: none; 
+                border-radius: 10px;
+                font-weight: bold;
+                font-size: 12px;
+            }
+            QPushButton:hover {
+                background: #DC2626;
+            }
+        """)
+        del_btn.setToolTip("Delete monitoring")
+        del_btn.clicked.connect(lambda _, ix=idx: self.delete_monitoring(ix))
+        h.addWidget(del_btn)
+        
+        self.monitoring_list.insertWidget(self.monitoring_list.count()-1, container)
+        
+        # Store widget reference for status updates
+        self.monitoring_widgets[monitoring_topic] = container
+
+    def delete_monitoring(self, index):
+        """Delete a monitoring configuration with validation."""
+        configs = load_monitoring()
+        if 0 <= index < len(configs):
+            configs.pop(index)
+            save_monitoring(configs)
+            self.load_monitoring_configs()
+
     def show_add_form_inline(self):
         """Show the inline add form and hide the add button."""
         self.show_add_form = True
@@ -661,7 +1178,7 @@ class NoteReminderApp(QMainWindow):
                 border-radius: 2px;
             }
             QCalendarWidget QTableView {
-                background: #000000;
+                background: #2a1f3d;
                 color: #F3F4F6;
                 selection-background-color: #8b5cf6;
                 selection-color: white;
@@ -705,10 +1222,10 @@ class NoteReminderApp(QMainWindow):
         """Toggle the reminder panel minimize state."""
         self.reminder_minimized = not self.reminder_minimized
         if self.reminder_minimized:
-            self.reminder_content.hide()
+            self.tab_widget.hide()
             self.minimize_btn.setText("+")
         else:
-            self.reminder_content.show()
+            self.tab_widget.show()
             self.minimize_btn.setText("─")
 
     def load_reminders(self):
