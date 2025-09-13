@@ -470,7 +470,7 @@ class NoteReminderApp(QMainWindow):
                 border-radius: 2px;
             }
             QCalendarWidget QTableView {
-                background: #2a1f3d;
+                background: #000000;
                 color: #F3F4F6;
                 selection-background-color: #8b5cf6;
                 selection-color: white;
@@ -661,7 +661,7 @@ class NoteReminderApp(QMainWindow):
                 border-radius: 2px;
             }
             QCalendarWidget QTableView {
-                background: #2a1f3d;
+                background: #000000;
                 color: #F3F4F6;
                 selection-background-color: #8b5cf6;
                 selection-color: white;
