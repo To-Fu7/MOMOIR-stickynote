@@ -11,7 +11,9 @@ from PyQt5.QtWidgets import (
     QFrame, QTextEdit, QPushButton, QLabel,
     QHBoxLayout, QVBoxLayout, QDialog, QCalendarWidget,
     QLineEdit, QSizeGrip, QGraphicsDropShadowEffect, QDateEdit,
-    QTabWidget, QSystemTrayIcon, QMessageBox, QMenu, QAction
+    QTabWidget, QSystemTrayIcon, QMessageBox, QMenu, QAction,
+    QDialogButtonBox, QFormLayout, QComboBox, QSpinBox, QCheckBox,
+    QColorDialog, QGroupBox, QScrollArea
 )
 try:
     import paho.mqtt.client as mqtt
@@ -24,6 +26,7 @@ NOTE_FILE = 'sticky_note.json'
 REM_FILE  = 'reminders.json'
 SETTINGS_FILE = 'app_settings.json'
 MONITORING_FILE = 'monitoring.json'
+MONITORING_SETTINGS_FILE = 'monitoring_settings.json'
 
 class MQTTSignal(QObject):
     """Signal class for MQTT communication with GUI thread."""
@@ -122,6 +125,408 @@ def save_monitoring(lst):
     except (IOError, UnicodeEncodeError) as e:
         print(f"Error saving monitoring: {e}")
 
+def load_monitoring_settings():
+    """Load monitoring settings from file with proper error handling."""
+    if not os.path.exists(MONITORING_SETTINGS_FILE):
+        return {
+            'status_colors': {
+                'normal': '#10B981',      # Green
+                'warning': '#F59E0B',     # Amber
+                'error': '#EF4444',       # Red
+                'unknown': '#6B7280'      # Gray
+            },
+            'triggers': {
+                'enable_alerts': True,
+                'alert_threshold': 3,     # Number of consecutive errors before alert
+                'cooldown_period': 300,   # Seconds between alerts for same node
+                'enable_sound': False,
+                'enable_notification': True
+            },
+            'mqtt': {
+                'broker_host': '10.11.0.34',
+                'broker_port': 1883,
+                'username': '',
+                'password': '',
+                'keepalive': 60,
+                'enable_ssl': False,
+                'enable_auth': False
+            },
+            'appearance': {
+                'status_dot_size': 12,
+                'show_timestamps': True,
+                'auto_refresh_interval': 5  # Seconds
+            }
+        }
+    try:
+        with open(MONITORING_SETTINGS_FILE, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        # Ensure all required keys exist with defaults
+        default_settings = load_monitoring_settings()
+        for key, value in default_settings.items():
+            if key not in data:
+                data[key] = value
+        return data
+    except (json.JSONDecodeError, IOError, UnicodeDecodeError) as e:
+        print(f"Error loading monitoring settings: {e}")
+        return load_monitoring_settings()
+
+def save_monitoring_settings(settings):
+    """Save monitoring settings to file with proper error handling."""
+    try:
+        with open(MONITORING_SETTINGS_FILE, 'w', encoding='utf-8') as f:
+            json.dump(settings, f, ensure_ascii=False, indent=2)
+    except (IOError, UnicodeEncodeError) as e:
+        print(f"Error saving monitoring settings: {e}")
+
+
+class MonitoringSettingsDialog(QDialog):
+    """Dialog for configuring monitoring settings."""
+    
+    def __init__(self, parent=None, current_settings=None):
+        super().__init__(parent)
+        self.current_settings = current_settings or load_monitoring_settings()
+        self.setWindowTitle("Monitoring Settings")
+        self.setModal(True)
+        self.setFixedSize(600, 500)
+        
+        # Apply dark theme
+        self.setStyleSheet("""
+            QDialog {
+                background: #1f2937;
+                color: #f9fafb;
+            }
+            QTabWidget::pane {
+                border: 1px solid #374151;
+                background: #1f2937;
+            }
+            QTabBar::tab {
+                background: #374151;
+                color: #d1d5db;
+                padding: 8px 16px;
+                margin-right: 2px;
+                border-top-left-radius: 4px;
+                border-top-right-radius: 4px;
+            }
+            QTabBar::tab:selected {
+                background: #6b46c1;
+                color: white;
+            }
+            QTabBar::tab:hover {
+                background: #4b5563;
+            }
+            QGroupBox {
+                font-weight: bold;
+                border: 2px solid #374151;
+                border-radius: 5px;
+                margin-top: 1ex;
+                padding-top: 10px;
+            }
+            QGroupBox::title {
+                subcontrol-origin: margin;
+                left: 10px;
+                padding: 0 5px 0 5px;
+            }
+            QLineEdit, QSpinBox, QComboBox {
+                background: #374151;
+                color: #f9fafb;
+                border: 1px solid #4b5563;
+                border-radius: 4px;
+                padding: 6px;
+            }
+            QLineEdit:focus, QSpinBox:focus, QComboBox:focus {
+                border-color: #8b5cf6;
+            }
+            QCheckBox {
+                color: #f9fafb;
+            }
+            QCheckBox::indicator {
+                width: 18px;
+                height: 18px;
+            }
+            QCheckBox::indicator:unchecked {
+                border: 2px solid #4b5563;
+                background: #374151;
+                border-radius: 3px;
+            }
+            QCheckBox::indicator:checked {
+                border: 2px solid #8b5cf6;
+                background: #8b5cf6;
+                border-radius: 3px;
+            }
+            QPushButton {
+                background: #6b46c1;
+                color: white;
+                border: none;
+                padding: 8px 16px;
+                border-radius: 4px;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background: #7c3aed;
+            }
+            QPushButton:pressed {
+                background: #5b21b6;
+            }
+            QDialogButtonBox QPushButton {
+                background: #374151;
+                color: #f9fafb;
+                border: 1px solid #4b5563;
+            }
+            QDialogButtonBox QPushButton:hover {
+                background: #4b5563;
+            }
+        """)
+        
+        self.init_ui()
+        self.load_settings()
+    
+    def init_ui(self):
+        layout = QVBoxLayout(self)
+        
+        # Create tab widget
+        tab_widget = QTabWidget()
+        
+        # Status Colors Tab
+        status_tab = self.create_status_colors_tab()
+        tab_widget.addTab(status_tab, "Status Colors")
+        
+        # Triggers Tab
+        triggers_tab = self.create_triggers_tab()
+        tab_widget.addTab(triggers_tab, "Triggers")
+        
+        # MQTT Tab
+        mqtt_tab = self.create_mqtt_tab()
+        tab_widget.addTab(mqtt_tab, "MQTT")
+        
+        # Appearance Tab
+        appearance_tab = self.create_appearance_tab()
+        tab_widget.addTab(appearance_tab, "Appearance")
+        
+        layout.addWidget(tab_widget)
+        
+        # Dialog buttons
+        button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        button_box.accepted.connect(self.accept)
+        button_box.rejected.connect(self.reject)
+        layout.addWidget(button_box)
+    
+    def create_status_colors_tab(self):
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+        
+        # Status Colors Group
+        colors_group = QGroupBox("Status Dot Colors")
+        colors_layout = QFormLayout(colors_group)
+        
+        # Normal status color
+        self.normal_color_btn = QPushButton("Choose Color")
+        self.normal_color_btn.clicked.connect(lambda: self.choose_color('normal'))
+        colors_layout.addRow("Normal:", self.normal_color_btn)
+        
+        # Warning status color
+        self.warning_color_btn = QPushButton("Choose Color")
+        self.warning_color_btn.clicked.connect(lambda: self.choose_color('warning'))
+        colors_layout.addRow("Warning:", self.warning_color_btn)
+        
+        # Error status color
+        self.error_color_btn = QPushButton("Choose Color")
+        self.error_color_btn.clicked.connect(lambda: self.choose_color('error'))
+        colors_layout.addRow("Error:", self.error_color_btn)
+        
+        # Unknown status color
+        self.unknown_color_btn = QPushButton("Choose Color")
+        self.unknown_color_btn.clicked.connect(lambda: self.choose_color('unknown'))
+        colors_layout.addRow("Unknown:", self.unknown_color_btn)
+        
+        layout.addWidget(colors_group)
+        layout.addStretch()
+        
+        return tab
+    
+    def create_triggers_tab(self):
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+        
+        # Alert Settings Group
+        alerts_group = QGroupBox("Alert Settings")
+        alerts_layout = QFormLayout(alerts_group)
+        
+        self.enable_alerts_cb = QCheckBox()
+        alerts_layout.addRow("Enable Alerts:", self.enable_alerts_cb)
+        
+        self.alert_threshold_spin = QSpinBox()
+        self.alert_threshold_spin.setRange(1, 10)
+        self.alert_threshold_spin.setSuffix(" consecutive errors")
+        alerts_layout.addRow("Alert Threshold:", self.alert_threshold_spin)
+        
+        self.cooldown_spin = QSpinBox()
+        self.cooldown_spin.setRange(60, 3600)
+        self.cooldown_spin.setSuffix(" seconds")
+        alerts_layout.addRow("Cooldown Period:", self.cooldown_spin)
+        
+        self.enable_sound_cb = QCheckBox()
+        alerts_layout.addRow("Enable Sound:", self.enable_sound_cb)
+        
+        self.enable_notification_cb = QCheckBox()
+        alerts_layout.addRow("Enable Notifications:", self.enable_notification_cb)
+        
+        layout.addWidget(alerts_group)
+        layout.addStretch()
+        
+        return tab
+    
+    def create_mqtt_tab(self):
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+        
+        # MQTT Connection Group
+        mqtt_group = QGroupBox("MQTT Connection")
+        mqtt_layout = QFormLayout(mqtt_group)
+        
+        self.mqtt_host_edit = QLineEdit()
+        mqtt_layout.addRow("Broker Host:", self.mqtt_host_edit)
+        
+        self.mqtt_port_spin = QSpinBox()
+        self.mqtt_port_spin.setRange(1, 65535)
+        mqtt_layout.addRow("Port:", self.mqtt_port_spin)
+        
+        self.mqtt_keepalive_spin = QSpinBox()
+        self.mqtt_keepalive_spin.setRange(10, 300)
+        self.mqtt_keepalive_spin.setSuffix(" seconds")
+        mqtt_layout.addRow("Keep Alive:", self.mqtt_keepalive_spin)
+        
+        self.enable_ssl_cb = QCheckBox()
+        mqtt_layout.addRow("Enable SSL:", self.enable_ssl_cb)
+        
+        # Authentication Group
+        auth_group = QGroupBox("Authentication")
+        auth_layout = QFormLayout(auth_group)
+        
+        self.enable_auth_cb = QCheckBox()
+        auth_layout.addRow("Enable Authentication:", self.enable_auth_cb)
+        
+        self.mqtt_username_edit = QLineEdit()
+        self.mqtt_username_edit.setEnabled(False)
+        auth_layout.addRow("Username:", self.mqtt_username_edit)
+        
+        self.mqtt_password_edit = QLineEdit()
+        self.mqtt_password_edit.setEchoMode(QLineEdit.Password)
+        self.mqtt_password_edit.setEnabled(False)
+        auth_layout.addRow("Password:", self.mqtt_password_edit)
+        
+        # Connect auth checkbox to enable/disable fields
+        self.enable_auth_cb.toggled.connect(self.toggle_auth_fields)
+        
+        layout.addWidget(mqtt_group)
+        layout.addWidget(auth_group)
+        layout.addStretch()
+        
+        return tab
+    
+    def create_appearance_tab(self):
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+        
+        # Appearance Settings Group
+        appearance_group = QGroupBox("Appearance Settings")
+        appearance_layout = QFormLayout(appearance_group)
+        
+        self.status_dot_size_spin = QSpinBox()
+        self.status_dot_size_spin.setRange(8, 24)
+        self.status_dot_size_spin.setSuffix(" px")
+        appearance_layout.addRow("Status Dot Size:", self.status_dot_size_spin)
+        
+        self.show_timestamps_cb = QCheckBox()
+        appearance_layout.addRow("Show Timestamps:", self.show_timestamps_cb)
+        
+        self.auto_refresh_spin = QSpinBox()
+        self.auto_refresh_spin.setRange(1, 60)
+        self.auto_refresh_spin.setSuffix(" seconds")
+        appearance_layout.addRow("Auto Refresh Interval:", self.auto_refresh_spin)
+        
+        layout.addWidget(appearance_group)
+        layout.addStretch()
+        
+        return tab
+    
+    def choose_color(self, status_type):
+        """Open color dialog for choosing status color."""
+        current_color = QColor(self.current_settings['status_colors'][status_type])
+        color = QColorDialog.getColor(current_color, self, f"Choose {status_type.title()} Color")
+        if color.isValid():
+            self.current_settings['status_colors'][status_type] = color.name()
+            # Update button text to show current color
+            button = getattr(self, f"{status_type}_color_btn")
+            button.setText(f"Color: {color.name()}")
+            button.setStyleSheet(f"QPushButton {{ background: {color.name()}; color: white; }}")
+    
+    def toggle_auth_fields(self, enabled):
+        """Enable/disable authentication fields based on checkbox."""
+        self.mqtt_username_edit.setEnabled(enabled)
+        self.mqtt_password_edit.setEnabled(enabled)
+    
+    def load_settings(self):
+        """Load current settings into the dialog."""
+        settings = self.current_settings
+        
+        # Status colors
+        for status_type in ['normal', 'warning', 'error', 'unknown']:
+            color = settings['status_colors'][status_type]
+            button = getattr(self, f"{status_type}_color_btn")
+            button.setText(f"Color: {color}")
+            button.setStyleSheet(f"QPushButton {{ background: {color}; color: white; }}")
+        
+        # Triggers
+        self.enable_alerts_cb.setChecked(settings['triggers']['enable_alerts'])
+        self.alert_threshold_spin.setValue(settings['triggers']['alert_threshold'])
+        self.cooldown_spin.setValue(settings['triggers']['cooldown_period'])
+        self.enable_sound_cb.setChecked(settings['triggers']['enable_sound'])
+        self.enable_notification_cb.setChecked(settings['triggers']['enable_notification'])
+        
+        # MQTT
+        self.mqtt_host_edit.setText(settings['mqtt']['broker_host'])
+        self.mqtt_port_spin.setValue(settings['mqtt']['broker_port'])
+        self.mqtt_keepalive_spin.setValue(settings['mqtt']['keepalive'])
+        self.enable_ssl_cb.setChecked(settings['mqtt']['enable_ssl'])
+        self.enable_auth_cb.setChecked(settings['mqtt']['enable_auth'])
+        self.mqtt_username_edit.setText(settings['mqtt']['username'])
+        self.mqtt_password_edit.setText(settings['mqtt']['password'])
+        
+        # Appearance
+        self.status_dot_size_spin.setValue(settings['appearance']['status_dot_size'])
+        self.show_timestamps_cb.setChecked(settings['appearance']['show_timestamps'])
+        self.auto_refresh_spin.setValue(settings['appearance']['auto_refresh_interval'])
+        
+        # Enable/disable auth fields based on current setting
+        self.toggle_auth_fields(settings['mqtt']['enable_auth'])
+    
+    def get_settings(self):
+        """Get the current settings from the dialog."""
+        return {
+            'status_colors': self.current_settings['status_colors'],
+            'triggers': {
+                'enable_alerts': self.enable_alerts_cb.isChecked(),
+                'alert_threshold': self.alert_threshold_spin.value(),
+                'cooldown_period': self.cooldown_spin.value(),
+                'enable_sound': self.enable_sound_cb.isChecked(),
+                'enable_notification': self.enable_notification_cb.isChecked()
+            },
+            'mqtt': {
+                'broker_host': self.mqtt_host_edit.text(),
+                'broker_port': self.mqtt_port_spin.value(),
+                'username': self.mqtt_username_edit.text(),
+                'password': self.mqtt_password_edit.text(),
+                'keepalive': self.mqtt_keepalive_spin.value(),
+                'enable_ssl': self.enable_ssl_cb.isChecked(),
+                'enable_auth': self.enable_auth_cb.isChecked()
+            },
+            'appearance': {
+                'status_dot_size': self.status_dot_size_spin.value(),
+                'show_timestamps': self.show_timestamps_cb.isChecked(),
+                'auto_refresh_interval': self.auto_refresh_spin.value()
+            }
+        }
+
 
 class NoteReminderApp(QMainWindow):
     def __init__(self):
@@ -141,6 +546,7 @@ class NoteReminderApp(QMainWindow):
         
         # Load settings and restore window state
         self.settings = load_settings()
+        self.monitoring_settings = load_monitoring_settings()
         self.restore_window_state()
         
         # Initialize MQTT
@@ -148,6 +554,8 @@ class NoteReminderApp(QMainWindow):
         self.mqtt_client = None
         self.monitoring_status = {}  # Store status for each monitoring node
         self.notification_count = 0
+        self.error_counts = {}  # Track consecutive errors for each node
+        self.last_alert_time = {}  # Track last alert time for cooldown
         
         # Initialize system tray for notifications
         self.init_system_tray()
@@ -190,6 +598,11 @@ class NoteReminderApp(QMainWindow):
             self.notifications_action.triggered.connect(self.toggle_notifications)
             tray_menu.addAction(self.notifications_action)
             
+            # Monitoring settings
+            settings_action = QAction("Monitoring Settings", self)
+            settings_action.triggered.connect(self.show_monitoring_settings)
+            tray_menu.addAction(settings_action)
+            
             tray_menu.addSeparator()
             
             quit_action = QAction("Quit", self)
@@ -228,6 +641,39 @@ class NoteReminderApp(QMainWindow):
         status = "enabled" if self.settings['notifications_enabled'] else "disabled"
         print(f"Notifications {status}")
 
+    def show_monitoring_settings(self):
+        """Show the monitoring settings dialog."""
+        dialog = MonitoringSettingsDialog(self, self.monitoring_settings)
+        if dialog.exec_() == QDialog.Accepted:
+            # Save the new settings
+            new_settings = dialog.get_settings()
+            save_monitoring_settings(new_settings)
+            self.monitoring_settings = new_settings
+            
+            # Reconnect MQTT with new settings if needed
+            if self.mqtt_client:
+                self.mqtt_client.disconnect()
+                self.init_mqtt()
+            
+            # Update monitoring widgets with new settings
+            self.update_monitoring_widgets_settings()
+            
+            print("Monitoring settings updated successfully")
+
+    def update_monitoring_widgets_settings(self):
+        """Update monitoring widgets with new settings."""
+        if hasattr(self, 'monitoring_widgets'):
+            for node_name, widget in self.monitoring_widgets.items():
+                status_dot = widget.findChild(QLabel, "status_dot")
+                if status_dot:
+                    # Update size
+                    dot_size = self.monitoring_settings['appearance']['status_dot_size']
+                    status_dot.setFixedSize(dot_size, dot_size)
+                    
+                    # Update current status color
+                    current_status = self.monitoring_status.get(node_name, 'unknown')
+                    self.update_monitoring_status(node_name, current_status)
+
     def quit_application(self):
         """Properly quit the application."""
         if hasattr(self, 'tray_icon') and self.tray_icon:
@@ -257,8 +703,27 @@ class NoteReminderApp(QMainWindow):
     def connect_mqtt(self):
         """Connect to MQTT broker in a separate thread."""
         try:
-            print("Attempting to connect to MQTT broker...")
-            self.mqtt_client.connect("10.11.0.34", 1883, 60)
+            mqtt_settings = self.monitoring_settings['mqtt']
+            host = mqtt_settings['broker_host']
+            port = mqtt_settings['broker_port']
+            keepalive = mqtt_settings['keepalive']
+            
+            print(f"Attempting to connect to MQTT broker at {host}:{port}...")
+            
+            # Set up authentication if enabled
+            if mqtt_settings['enable_auth']:
+                username = mqtt_settings['username']
+                password = mqtt_settings['password']
+                if username and password:
+                    self.mqtt_client.username_pw_set(username, password)
+                    print(f"Using MQTT authentication for user: {username}")
+            
+            # Set up SSL if enabled
+            if mqtt_settings['enable_ssl']:
+                self.mqtt_client.tls_set()
+                print("SSL/TLS enabled for MQTT connection")
+            
+            self.mqtt_client.connect(host, port, keepalive)
             self.mqtt_client.loop_forever()
         except Exception as e:
             print(f"MQTT connection error: {e}")
@@ -309,9 +774,53 @@ class NoteReminderApp(QMainWindow):
     def handle_status_change(self, node_name, status):
         """Handle status changes for monitoring nodes."""
         self.monitoring_status[node_name] = status
+        
+        # Reset error count if status is normal
+        if status == 'normal':
+            self.error_counts[node_name] = 0
+        elif status == 'error':
+            # Increment error count
+            self.error_counts[node_name] = self.error_counts.get(node_name, 0) + 1
+            
+            # Check if we should trigger an alert
+            self.check_alert_trigger(node_name, status)
+        
         # Update UI if monitoring tab is active
         if hasattr(self, 'monitoring_widgets'):
             self.update_monitoring_status(node_name, status)
+    
+    def check_alert_trigger(self, node_name, status):
+        """Check if alert should be triggered based on settings."""
+        if not self.monitoring_settings['triggers']['enable_alerts']:
+            return
+        
+        # Check if we've reached the alert threshold
+        error_count = self.error_counts.get(node_name, 0)
+        threshold = self.monitoring_settings['triggers']['alert_threshold']
+        
+        if error_count >= threshold:
+            # Check cooldown period
+            current_time = time.time()
+            last_alert = self.last_alert_time.get(node_name, 0)
+            cooldown = self.monitoring_settings['triggers']['cooldown_period']
+            
+            if current_time - last_alert >= cooldown:
+                self.trigger_alert(node_name, status)
+                self.last_alert_time[node_name] = current_time
+    
+    def trigger_alert(self, node_name, status):
+        """Trigger an alert for a monitoring node."""
+        print(f"Alert triggered for {node_name}: {status}")
+        
+        # Show notification if enabled
+        if self.monitoring_settings['triggers']['enable_notification']:
+            notification_msg = f"Alert: {node_name} has {self.error_counts[node_name]} consecutive errors"
+            self.show_notification("Monitoring Alert", notification_msg)
+        
+        # Play sound if enabled
+        if self.monitoring_settings['triggers']['enable_sound']:
+            # Simple beep sound (you can enhance this with actual audio files)
+            print("\a")  # ASCII bell character
 
     def handle_error_notification(self, node_name, error_type, message):
         """Handle error notifications."""
@@ -361,15 +870,16 @@ class NoteReminderApp(QMainWindow):
             widget = self.monitoring_widgets[node_name]
             status_dot = widget.findChild(QLabel, "status_dot")
             if status_dot:
-                if status == 'error':
-                    status_dot.setStyleSheet("background: #EF4444; border-radius: 6px;")
-                    print(f"Status dot updated to RED for {node_name}")
-                elif status == 'normal':
-                    status_dot.setStyleSheet("background: #10B981; border-radius: 6px;")
-                    print(f"Status dot updated to GREEN for {node_name}")
-                else:
-                    status_dot.setStyleSheet("background: #6B7280; border-radius: 6px;")
-                    print(f"Status dot updated to GRAY for {node_name}")
+                # Get color from settings
+                colors = self.monitoring_settings['status_colors']
+                color = colors.get(status, colors['unknown'])
+                
+                # Get dot size from settings
+                dot_size = self.monitoring_settings['appearance']['status_dot_size']
+                radius = dot_size // 2
+                
+                status_dot.setStyleSheet(f"background: {color}; border-radius: {radius}px;")
+                print(f"Status dot updated to {color} for {node_name} ({status})")
 
     def update_notification_badge(self):
         """Update notification badge on monitoring tab."""
@@ -1180,9 +1690,13 @@ class NoteReminderApp(QMainWindow):
         
         # Status dot
         status_dot = QLabel()
-        status_dot.setFixedSize(12, 12)
+        dot_size = self.monitoring_settings['appearance']['status_dot_size']
+        status_dot.setFixedSize(dot_size, dot_size)
         status_dot.setObjectName("status_dot")
-        status_dot.setStyleSheet("background: #6B7280; border-radius: 6px;")  # Default gray
+        # Use configurable color for unknown status
+        unknown_color = self.monitoring_settings['status_colors']['unknown']
+        radius = dot_size // 2
+        status_dot.setStyleSheet(f"background: {unknown_color}; border-radius: {radius}px;")
         h.addWidget(status_dot)
         
         del_btn = QPushButton("×")
