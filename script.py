@@ -11,7 +11,7 @@ from PyQt5.QtWidgets import (
     QFrame, QTextEdit, QPushButton, QLabel,
     QHBoxLayout, QVBoxLayout, QDialog, QCalendarWidget,
     QLineEdit, QSizeGrip, QGraphicsDropShadowEffect, QDateEdit,
-    QTabWidget, QSystemTrayIcon, QMessageBox
+    QTabWidget, QSystemTrayIcon, QMessageBox, QMenu, QAction
 )
 try:
     import paho.mqtt.client as mqtt
@@ -76,16 +76,22 @@ def load_settings():
     if not os.path.exists(SETTINGS_FILE):
         return {
             'window': {'x': 100, 'y': 100, 'width': 700, 'height': 450},
-            'splitter': [350, 350]
+            'splitter': [350, 350],
+            'notifications_enabled': True
         }
     try:
         with open(SETTINGS_FILE, 'r', encoding='utf-8') as f:
-            return json.load(f)
+            data = json.load(f)
+        # Ensure notifications_enabled exists
+        if 'notifications_enabled' not in data:
+            data['notifications_enabled'] = True
+        return data
     except (json.JSONDecodeError, IOError, UnicodeDecodeError) as e:
         print(f"Error loading settings: {e}")
         return {
             'window': {'x': 100, 'y': 100, 'width': 700, 'height': 450},
-            'splitter': [350, 350]
+            'splitter': [350, 350],
+            'notifications_enabled': True
         }
 
 def save_settings(settings):
@@ -115,7 +121,6 @@ def save_monitoring(lst):
             json.dump(lst, f, ensure_ascii=False, indent=2)
     except (IOError, UnicodeEncodeError) as e:
         print(f"Error saving monitoring: {e}")
-
 
 
 class NoteReminderApp(QMainWindow):
@@ -150,16 +155,89 @@ class NoteReminderApp(QMainWindow):
         self.init_ui()
 
     def init_system_tray(self):
-        """Initialize system tray for notifications."""
+        """Initialize system tray for notifications with enhanced functionality."""
         if QSystemTrayIcon.isSystemTrayAvailable():
             self.tray_icon = QSystemTrayIcon(self)
-            self.tray_icon.setIcon(QIcon("./Kazimierz.png"))
+            
+            # Set icon - fallback to default if custom icon not found
+            try:
+                if os.path.exists("./Kazimierz.png"):
+                    self.tray_icon.setIcon(QIcon("./Kazimierz.png"))
+                else:
+                    # Create a simple colored icon as fallback
+                    from PyQt5.QtGui import QPixmap, QPainter
+                    pixmap = QPixmap(16, 16)
+                    pixmap.fill(Qt.blue)
+                    self.tray_icon.setIcon(QIcon(pixmap))
+            except Exception as e:
+                print(f"Warning: Could not set tray icon: {e}")
+                
             self.tray_icon.setToolTip("Memoir - Monitoring System")
+            
+            # Create context menu for tray icon
+            tray_menu = QMenu()
+            
+            show_action = QAction("Show Memoir", self)
+            show_action.triggered.connect(self.show_and_raise)
+            tray_menu.addAction(show_action)
+            
+            tray_menu.addSeparator()
+            
+            # Notifications toggle
+            self.notifications_action = QAction("Enable Notifications", self)
+            self.notifications_action.setCheckable(True)
+            self.notifications_action.setChecked(self.settings.get('notifications_enabled', True))
+            self.notifications_action.triggered.connect(self.toggle_notifications)
+            tray_menu.addAction(self.notifications_action)
+            
+            tray_menu.addSeparator()
+            
+            quit_action = QAction("Quit", self)
+            quit_action.triggered.connect(self.quit_application)
+            tray_menu.addAction(quit_action)
+            
+            self.tray_icon.setContextMenu(tray_menu)
+            
+            # Connect tray icon activation
+            self.tray_icon.activated.connect(self.on_tray_icon_activated)
+            
+            # Show tray icon
             self.tray_icon.show()
+            
+            print("System tray initialized successfully")
+        else:
+            print("Warning: System tray not available")
+            self.tray_icon = None
+
+    def show_and_raise(self):
+        """Show and raise the main window."""
+        self.show()
+        self.raise_()
+        self.activateWindow()
+
+    def on_tray_icon_activated(self, reason):
+        """Handle tray icon activation."""
+        if reason == QSystemTrayIcon.DoubleClick:
+            self.show_and_raise()
+
+    def toggle_notifications(self):
+        """Toggle notification system on/off."""
+        self.settings['notifications_enabled'] = self.notifications_action.isChecked()
+        save_settings(self.settings)
+        
+        status = "enabled" if self.settings['notifications_enabled'] else "disabled"
+        print(f"Notifications {status}")
+
+    def quit_application(self):
+        """Properly quit the application."""
+        if hasattr(self, 'tray_icon') and self.tray_icon:
+            self.tray_icon.hide()
+        self.close()
 
     def init_mqtt(self):
         """Initialize MQTT client if available."""
         if not MQTT_AVAILABLE:
+            print("MQTT not available - monitoring features disabled")
             return
             
         self.mqtt_client = mqtt.Client()
@@ -179,7 +257,8 @@ class NoteReminderApp(QMainWindow):
     def connect_mqtt(self):
         """Connect to MQTT broker in a separate thread."""
         try:
-            self.mqtt_client.connect("localhost", 1883, 60)
+            print("Attempting to connect to MQTT broker...")
+            self.mqtt_client.connect("10.11.0.15", 1883, 60)
             self.mqtt_client.loop_forever()
         except Exception as e:
             print(f"MQTT connection error: {e}")
@@ -212,18 +291,20 @@ class NoteReminderApp(QMainWindow):
             
             # Extract monitoring node name from topic
             if topic.startswith('/monitoring/'):
-                node_name = topic.split('/')[-1]
                 if topic.endswith('/error'):
-                    node_name = topic.split('/')[-2]
+                    node_name = topic.split('/')[2]  # Get node name from /monitoring/node/error
                     # Handle error message
                     error_type = data.get('error_type', 'unknown')
                     self.mqtt_signal.error_received.emit(node_name, error_type, message)
                 else:
+                    node_name = topic.split('/')[2]  # Get node name from /monitoring/node
                     # Handle normal status
                     self.mqtt_signal.status_changed.emit(node_name, status)
                     
         except json.JSONDecodeError:
             print(f"Invalid JSON received on topic {topic}: {message}")
+        except IndexError:
+            print(f"Invalid topic format: {topic}")
 
     def handle_status_change(self, node_name, status):
         """Handle status changes for monitoring nodes."""
@@ -242,14 +323,37 @@ class NoteReminderApp(QMainWindow):
             self.update_monitoring_status(node_name, 'error')
             self.update_notification_badge()
         
-        # Show system notification
-        notification_msg = f"Detected Anomalies on {node_name} error detail: {error_type}"
-        self.show_notification(notification_msg)
+        # Show system notification if enabled
+        if self.settings.get('notifications_enabled', True):
+            notification_msg = f"Detected Anomalies on {node_name}\nError type: {error_type}"
+            self.show_notification("Memoir Alert", notification_msg)
 
-    def show_notification(self, message):
-        """Show system notification."""
-        if hasattr(self, 'tray_icon') and self.tray_icon.isVisible():
-            self.tray_icon.showMessage("Memoir Alert", message, QSystemTrayIcon.Warning, 5000)
+    def show_notification(self, title, message):
+        """Show system notification with enhanced error handling."""
+        try:
+            if hasattr(self, 'tray_icon') and self.tray_icon and self.tray_icon.isVisible():
+                # Show system tray notification
+                self.tray_icon.showMessage(
+                    title, 
+                    message, 
+                    QSystemTrayIcon.Warning, 
+                    5000  # 5 seconds
+                )
+                print(f"Notification sent: {title} - {message}")
+                return True
+            else:
+                # Fallback: Show message box if tray not available
+                msg_box = QMessageBox(self)
+                msg_box.setWindowTitle(title)
+                msg_box.setText(message)
+                msg_box.setIcon(QMessageBox.Warning)
+                msg_box.setStandardButtons(QMessageBox.Ok)
+                msg_box.show()
+                print(f"Fallback notification shown: {title} - {message}")
+                return True
+        except Exception as e:
+            print(f"Error showing notification: {e}")
+            return False
 
     def update_monitoring_status(self, node_name, status):
         """Update monitoring status in UI."""
@@ -259,16 +363,30 @@ class NoteReminderApp(QMainWindow):
             if status_dot:
                 if status == 'error':
                     status_dot.setStyleSheet("background: #EF4444; border-radius: 6px;")
+                    print(f"Status dot updated to RED for {node_name}")
                 elif status == 'normal':
-                    status_dot.setStyleSheet("background: #3B82F6; border-radius: 6px;")
+                    status_dot.setStyleSheet("background: #10B981; border-radius: 6px;")
+                    print(f"Status dot updated to GREEN for {node_name}")
                 else:
                     status_dot.setStyleSheet("background: #6B7280; border-radius: 6px;")
+                    print(f"Status dot updated to GRAY for {node_name}")
 
     def update_notification_badge(self):
         """Update notification badge on monitoring tab."""
-        if hasattr(self, 'monitoring_tab') and self.notification_count > 0:
-            # Add badge to tab text
-            self.monitoring_tab.setText(f"Monitoring ({self.notification_count})")
+        if hasattr(self, 'tab_widget') and hasattr(self, 'monitoring_tab_index') and self.notification_count > 0:
+            # Update the tab text using the tab widget and index
+            self.tab_widget.setTabText(self.monitoring_tab_index, f"Monitoring ({self.notification_count})")
+        elif hasattr(self, 'tab_widget') and hasattr(self, 'monitoring_tab_index'):
+            # Reset to normal text when no notifications
+            self.tab_widget.setTabText(self.monitoring_tab_index, "Monitoring")
+
+    def on_tab_changed(self, index):
+        """Handle tab change events to clear notifications when monitoring tab is viewed."""
+        if hasattr(self, 'monitoring_tab_index') and index == self.monitoring_tab_index:
+            # User switched to monitoring tab, clear notification count
+            if self.notification_count > 0:
+                self.notification_count = 0
+                self.update_notification_badge()
 
     def restore_window_state(self):
         """Restore window position and size from settings."""
@@ -553,9 +671,12 @@ class NoteReminderApp(QMainWindow):
         self.reminder_tab = self.build_reminder_tab()
         self.tab_widget.addTab(self.reminder_tab, "Reminder")
 
-        # Create monitoring tab
+        # Create monitoring tab - FIXED: Store index instead of widget
         self.monitoring_tab_widget = self.build_monitoring_tab()
-        self.monitoring_tab = self.tab_widget.addTab(self.monitoring_tab_widget, "Monitoring")
+        self.monitoring_tab_index = self.tab_widget.addTab(self.monitoring_tab_widget, "Monitoring")
+
+        # Connect tab change signal
+        self.tab_widget.currentChanged.connect(self.on_tab_changed)
 
         v.addWidget(self.tab_widget)
 
@@ -1361,7 +1482,13 @@ class NoteReminderApp(QMainWindow):
             save_note(self.note_edit.toPlainText())
         
         self.save_window_state()
+        
+        # Hide tray icon if it exists
+        if hasattr(self, 'tray_icon') and self.tray_icon:
+            self.tray_icon.hide()
+            
         super().closeEvent(event)
+
 
 if __name__ == '__main__':
     # Enable high DPI support before creating QApplication
@@ -1369,6 +1496,9 @@ if __name__ == '__main__':
     QApplication.setAttribute(Qt.AA_UseHighDpiPixmaps, True)
     
     app = QApplication(sys.argv)
+    
+    # Prevent application from quitting when main window is hidden
+    app.setQuitOnLastWindowClosed(False)
     
     window = NoteReminderApp()
     window.show()
